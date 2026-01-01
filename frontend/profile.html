@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - Exercise Competition Platform</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>My Profile</h1>
+            <nav>
+                <a href="index.html">Home</a>
+            </nav>
+        </header>
+
+        <div class="section">
+            <h2 id="profile-username">Loading...</h2>
+        </div>
+
+        <div class="section">
+            <h2>My Sessions</h2>
+            <div id="sessions-content">Loading...</div>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+    <script>
+        checkAuth();
+
+        async function loadProfile() {
+            const userId = parseInt(localStorage.getItem('userId'));
+            const username = localStorage.getItem('username');
+            
+            document.getElementById('profile-username').textContent = `Username: ${username}`;
+
+            try {
+                const sessions = await getUserSessions(userId);
+                displaySessions(sessions);
+            } catch (error) {
+                document.getElementById('sessions-content').innerHTML = '<p>Error loading sessions</p>';
+            }
+        }
+
+        function displaySessions(sessions) {
+            if (sessions.length === 0) {
+                document.getElementById('sessions-content').innerHTML = '<p>No sessions yet</p>';
+                return;
+            }
+
+            const html = `
+                <table class="sessions-table">
+                    <thead>
+                        <tr>
+                            <th>Exercise</th>
+                            <th>Score</th>
+                            <th>Duration</th>
+                            <th>Errors</th>
+                            <th>Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sessions.map(s => `
+                            <tr>
+                                <td>${s.exercise.display_name}</td>
+                                <td>${s.score}</td>
+                                <td>${s.duration_seconds ? s.duration_seconds.toFixed(1) + 's' : 'N/A'}</td>
+                                <td>${s.error_count}</td>
+                                <td>${new Date(s.created_at).toLocaleString()}</td>
+                                <td>
+                                    ${s.annotated_video_filename ? 
+                                        `<button onclick="viewAnnotatedVideo(${s.id})">View Annotated Video</button>` : 
+                                        'Processing...'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+            document.getElementById('sessions-content').innerHTML = html;
+        }
+
+        function viewAnnotatedVideo(sessionId) {
+            // Open the annotated video in a new tab
+            window.open(`${API_BASE}/api/sessions/${sessionId}/annotated-video`, '_blank');
+        }
+
+        loadProfile();
+    </script>
+</body>
+</html>
+

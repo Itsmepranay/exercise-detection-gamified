@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exercise Competition Platform</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Exercise Competition Platform</h1>
+        </header>
+
+        <div id="login-section" class="section">
+            <h2>Enter Your Username</h2>
+            <input type="text" id="username-input" placeholder="Username" maxlength="50">
+            <button onclick="login()">Start</button>
+        </div>
+
+        <div id="dashboard-section" class="section" style="display: none;">
+            <h2>Welcome, <span id="username-display"></span>!</h2>
+            
+            <div class="quick-stats">
+                <h3>Quick Stats</h3>
+                <div id="quick-stats-content">Loading...</div>
+            </div>
+
+            <div class="action-buttons">
+                <button onclick="location.href='exercise.html'">Start Exercise</button>
+                <button onclick="location.href='leaderboard.html'">View Leaderboards</button>
+                <button onclick="location.href='challenges.html'">Challenges</button>
+                <button onclick="location.href='profile.html'">My Profile</button>
+            </div>
+
+            <div class="active-challenges">
+                <h3>Active Challenges</h3>
+                <div id="active-challenges-content">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+    <script>
+        // Check if user is logged in
+        const userId = localStorage.getItem('userId');
+        const username = localStorage.getItem('username');
+        
+        if (userId && username) {
+            document.getElementById('login-section').style.display = 'none';
+            document.getElementById('dashboard-section').style.display = 'block';
+            document.getElementById('username-display').textContent = username;
+            loadDashboard(userId);
+        }
+
+        async function login() {
+            const username = document.getElementById('username-input').value.trim();
+            if (!username) {
+                alert('Please enter a username');
+                return;
+            }
+
+            try {
+                const user = await createUser(username);
+                localStorage.setItem('userId', user.id);
+                localStorage.setItem('username', user.username);
+                location.reload();
+            } catch (error) {
+                if (error.message.includes('already exists')) {
+                    // User exists, try to find them
+                    const users = await listUsers();
+                    const user = users.find(u => u.username === username);
+                    if (user) {
+                        localStorage.setItem('userId', user.id);
+                        localStorage.setItem('username', user.username);
+                        location.reload();
+                    } else {
+                        alert('Error: ' + error.message);
+                    }
+                } else {
+                    alert('Error: ' + error.message);
+                }
+            }
+        }
+
+        async function loadDashboard(userId) {
+            // Load quick stats
+            try {
+                const sessions = await getUserSessions(userId, null, 0, 5);
+                const statsHtml = sessions.length > 0 
+                    ? `<p>Recent sessions: ${sessions.length}</p>`
+                    : '<p>No sessions yet. Start your first exercise!</p>';
+                document.getElementById('quick-stats-content').innerHTML = statsHtml;
+            } catch (error) {
+                document.getElementById('quick-stats-content').innerHTML = '<p>Error loading stats</p>';
+            }
+
+            // Load active challenges
+            try {
+                const challenges = await getUserChallenges(userId, 'active');
+                const challengesHtml = challenges.length > 0
+                    ? challenges.map(c => `<div class="challenge-item">${c.exercise.display_name} challenge with ${c.opponent.username} - ${c.status}</div>`).join('')
+                    : '<p>No active challenges</p>';
+                document.getElementById('active-challenges-content').innerHTML = challengesHtml;
+            } catch (error) {
+                document.getElementById('active-challenges-content').innerHTML = '<p>Error loading challenges</p>';
+            }
+        }
+    </script>
+</body>
+</html>
+

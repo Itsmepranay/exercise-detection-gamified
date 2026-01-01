@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Challenges - Exercise Competition Platform</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Challenges</h1>
+            <nav>
+                <a href="index.html">Home</a>
+            </nav>
+        </header>
+
+        <div class="section">
+            <h2>Create Challenge</h2>
+            <select id="challenge-exercise-select">
+                <option value="">Loading exercises...</option>
+            </select>
+            <select id="challenge-user-select">
+                <option value="">Loading users...</option>
+            </select>
+            <button onclick="createChallenge()">Create Challenge</button>
+        </div>
+
+        <div class="section">
+            <h2>Pending Challenges</h2>
+            <div id="pending-challenges"></div>
+        </div>
+
+        <div class="section">
+            <h2>Active Challenges</h2>
+            <div id="active-challenges"></div>
+        </div>
+
+        <div class="section">
+            <h2>Completed Challenges</h2>
+            <div id="completed-challenges"></div>
+        </div>
+
+        <div class="section">
+            <h2>Rejected Challenges</h2>
+            <div id="rejected-challenges"></div>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/challenges.js"></script>
+    <script>
+        checkAuth();
+
+        async function loadData() {
+            await loadExercises();
+            await loadUsers();
+            await loadChallenges();
+        }
+
+        async function loadExercises() {
+            try {
+                const exercises = await listExercises();
+                const select = document.getElementById('challenge-exercise-select');
+                select.innerHTML = '<option value="">Select exercise...</option>';
+                exercises.forEach(ex => {
+                    const option = document.createElement('option');
+                    option.value = ex.id;
+                    option.textContent = ex.display_name;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading exercises:', error);
+            }
+        }
+
+        async function loadUsers() {
+            try {
+                const users = await listUsers();
+                const currentUserId = parseInt(localStorage.getItem('userId'));
+                const select = document.getElementById('challenge-user-select');
+                select.innerHTML = '<option value="">Select opponent...</option>';
+                users.filter(u => u.id !== currentUserId).forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = user.username;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+
+        async function createChallenge() {
+            const exerciseId = parseInt(document.getElementById('challenge-exercise-select').value);
+            const opponentId = parseInt(document.getElementById('challenge-user-select').value);
+            const challengerId = parseInt(localStorage.getItem('userId'));
+
+            if (!exerciseId || !opponentId) {
+                alert('Please select both exercise and opponent');
+                return;
+            }
+
+            try {
+                await createChallengeAPI(challengerId, opponentId, exerciseId);
+                alert('Challenge created!');
+                loadChallenges();
+            } catch (error) {
+                alert('Error creating challenge: ' + error.message);
+            }
+        }
+
+        async function loadChallenges() {
+            const userId = parseInt(localStorage.getItem('userId'));
+            try {
+                const challenges = await getUserChallenges(userId);
+                displayChallenges(challenges);
+            } catch (error) {
+                console.error('Error loading challenges:', error);
+            }
+        }
+
+        function displayChallenges(challenges) {
+            const userId = parseInt(localStorage.getItem('userId'));
+            const pending = challenges.filter(c => c.status === 'pending');
+            const active = challenges.filter(c => c.status === 'active');
+            const completed = challenges.filter(c => c.status === 'completed');
+            const rejected = challenges.filter(c => c.status === 'rejected');
+
+            document.getElementById('pending-challenges').innerHTML = 
+                pending.length > 0 ? renderChallengeList(pending, userId) : '<p>No pending challenges</p>';
+            document.getElementById('active-challenges').innerHTML = 
+                active.length > 0 ? renderChallengeList(active, userId) : '<p>No active challenges</p>';
+            document.getElementById('completed-challenges').innerHTML = 
+                completed.length > 0 ? renderChallengeList(completed, userId) : '<p>No completed challenges</p>';
+            document.getElementById('rejected-challenges').innerHTML = 
+                rejected.length > 0 ? renderChallengeList(rejected, userId) : '<p>No rejected challenges</p>';
+        }
+
+        function renderChallengeList(challenges, userId) {
+            return challenges.map(c => {
+                let actionButtons = '';
+                
+                if (c.status === 'pending') {
+                    if (c.opponent_id === userId) {
+                        // User is the opponent - can accept or reject
+                        actionButtons = `
+                            <button onclick="acceptChallenge(${c.id})">Accept Challenge</button>
+                            <button onclick="rejectChallenge(${c.id})" style="background-color: #dc3545;">Reject Challenge</button>
+                        `;
+                    } else {
+                        // User is the challenger - waiting for response
+                        actionButtons = '<p style="color: #666;">Waiting for opponent to respond</p>';
+                    }
+                } else if (c.status === 'active') {
+                    actionButtons = `<button onclick="doExerciseForChallenge(${c.id}, ${c.exercise.id})">Do Exercise & Submit</button>`;
+                } else if (c.status === 'completed') {
+                    actionButtons = `
+                        <button onclick="toggleComparison(${c.id})">Compare Metrics</button>
+                        <div id="comparison-${c.id}" style="display: none; margin-top: 10px; padding: 10px; background-color: #f9f9f9; border-radius: 5px;">
+                            ${renderComparison(c)}
+                        </div>
+                    `;
+                } else if (c.status === 'rejected') {
+                    actionButtons = '<p style="color: #dc3545;">Challenge rejected</p>';
+                }
+                
+                return `
+                    <div class="challenge-item">
+                        <p>Exercise: ${c.exercise.display_name} | Status: ${c.status}</p>
+                        <p>Challenger: ${c.challenger.username} | Opponent: ${c.opponent.username}</p>
+                        ${c.winner ? `<p>Winner: ${c.winner.username}</p>` : ''}
+                        ${actionButtons}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function doExerciseForChallenge(challengeId, exerciseId) {
+            // Store challenge info for submission after exercise
+            localStorage.setItem('pendingChallengeId', challengeId);
+            localStorage.setItem('pendingExerciseId', exerciseId);
+            
+            // Redirect to exercise page with pre-selected exercise
+            window.location.href = `exercise.html?exercise=${exerciseId}&challenge=${challengeId}`;
+        }
+
+        async function submitToChallenge(challengeId) {
+            const sessionId = parseInt(localStorage.getItem('lastSessionId'));
+            if (!sessionId) {
+                alert('Please complete an exercise first');
+                return;
+            }
+
+            try {
+                await submitChallengeSession(challengeId, sessionId);
+                alert('Session submitted to challenge!');
+                loadChallenges();
+            } catch (error) {
+                alert('Error submitting: ' + error.message);
+            }
+        }
+
+        async function acceptChallenge(challengeId) {
+            try {
+                await acceptChallengeAPI(challengeId);
+                alert('Challenge accepted!');
+                loadChallenges();
+            } catch (error) {
+                alert('Error accepting challenge: ' + error.message);
+            }
+        }
+
+        async function rejectChallenge(challengeId) {
+            if (!confirm('Are you sure you want to reject this challenge?')) {
+                return;
+            }
+            
+            try {
+                await rejectChallengeAPI(challengeId);
+                alert('Challenge rejected!');
+                loadChallenges();
+            } catch (error) {
+                alert('Error rejecting challenge: ' + error.message);
+            }
+        }
+
+        function toggleComparison(challengeId) {
+            const comparisonDiv = document.getElementById(`comparison-${challengeId}`);
+            if (comparisonDiv.style.display === 'none') {
+                comparisonDiv.style.display = 'block';
+            } else {
+                comparisonDiv.style.display = 'none';
+            }
+        }
+
+        function renderComparison(challenge) {
+            if (!challenge.sessions || challenge.sessions.length === 0) {
+                return '<p>No sessions submitted yet.</p>';
+            }
+
+            const challengerSessions = challenge.sessions.filter(s => s.user_id === challenge.challenger_id);
+            const opponentSessions = challenge.sessions.filter(s => s.user_id === challenge.opponent_id);
+
+            const getBestSession = (sessions) => sessions.reduce((best, current) => !best || current.score > best.score ? current : best, null);
+
+            const challengerBest = getBestSession(challengerSessions);
+            const opponentBest = getBestSession(opponentSessions);
+
+            let html = '<h4>Best Performances:</h4>';
+            if (challengerBest) {
+                html += `<p><strong>${challenge.challenger.username}:</strong> Score: ${challengerBest.score}, Duration: ${challengerBest.duration_seconds ? challengerBest.duration_seconds.toFixed(1) + 's' : 'N/A'}, Errors: ${challengerBest.error_count}</p>`;
+            }
+            if (opponentBest) {
+                html += `<p><strong>${challenge.opponent.username}:</strong> Score: ${opponentBest.score}, Duration: ${opponentBest.duration_seconds ? opponentBest.duration_seconds.toFixed(1) + 's' : 'N/A'}, Errors: ${opponentBest.error_count}</p>`;
+            }
+
+            if (challengerBest && opponentBest) {
+                const scoreDiff = challengerBest.score - opponentBest.score;
+                html += `<p><strong>Score Difference:</strong> ${scoreDiff > 0 ? `${challenge.challenger.username} leads by ${scoreDiff}` : scoreDiff < 0 ? `${challenge.opponent.username} leads by ${-scoreDiff}` : 'Tied'}</p>`;
+            }
+
+            return html;
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
+

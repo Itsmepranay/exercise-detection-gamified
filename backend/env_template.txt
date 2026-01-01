@@ -1,0 +1,16 @@
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_password_here
+DB_NAME=exercise_competition
+
+# File Storage
+UPLOAD_DIR=uploads
+VIDEO_DIR=uploads/videos
+
+# CORS Origins (comma-separated for multiple origins, or * for all)
+# Example: CORS_ORIGINS=http://localhost:8080,http://localhost:3000
+# Leave empty or commented to use default ["*"]
+# CORS_ORIGINS=*
+

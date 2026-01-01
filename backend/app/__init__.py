@@ -1,0 +1,2 @@
+# Exercise Competition Platform Backend
+
