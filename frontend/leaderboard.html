@@ -1,116 +1,136 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leaderboards - Exercise Competition Platform</title>
-    <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leaderboard — RepTrack</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Leaderboards</h1>
-            <nav>
-                <a href="index.html">Home</a>
-            </nav>
-        </header>
 
-        <div class="section">
-            <h2>Filter Options</h2>
-            <select id="exercise-select">
-                <option value="">Loading exercises...</option>
-            </select>
-            <select id="period-select">
-                <option value="all_time">All Time</option>
-                <option value="weekly">This Week</option>
-                <option value="daily">Today</option>
-            </select>
-            <button onclick="loadLeaderboard()">Update</button>
-        </div>
-
-        <div class="section">
-            <h2>Leaderboard</h2>
-            <div id="leaderboard-content">
-                <p>Select an exercise and period to view leaderboard</p>
-            </div>
-        </div>
+<nav class="navbar">
+  <a class="nav-brand" href="index.html">RepTrack</a>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="exercise.html">Exercises</a></li>
+    <li><a href="challenges.html">Challenges</a></li>
+    <li><a href="leaderboard.html" class="active">Leaderboard</a></li>
+    <li><a href="profile.html">Profile</a></li>
+  </ul>
+  <div class="nav-right">
+    <div class="nav-user">
+      <div class="nav-avatar" id="nav-avatar">?</div>
+      <span id="nav-username"></span>
     </div>
+    <button class="nav-logout" onclick="logout()">Logout</button>
+  </div>
+</nav>
 
-    <script src="js/auth.js"></script>
-    <script src="js/api.js"></script>
-    <script src="js/leaderboard.js"></script>
-    <script>
-        checkAuth();
+<div class="page">
+  <div class="page-header fade-up">
+    <div>
+      <div class="page-title">Leaderboard</div>
+      <div class="page-subtitle">Top performers ranked by best score</div>
+    </div>
+  </div>
 
-        // Load exercises
-        async function loadExercises() {
-            try {
-                const exercises = await listExercises();
-                const select = document.getElementById('exercise-select');
-                select.innerHTML = '<option value="">Select an exercise...</option>';
-                exercises.forEach(ex => {
-                    const option = document.createElement('option');
-                    option.value = ex.id;
-                    option.textContent = ex.display_name;
-                    select.appendChild(option);
-                });
-            } catch (error) {
-                alert('Error loading exercises: ' + error.message);
-            }
-        }
+  <!-- FILTERS -->
+  <div class="card fade-up fade-up-1 mb-16" style="max-width:560px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+      <div>
+        <label class="form-label">Exercise</label>
+        <select id="exercise-select"><option value="">Loading…</option></select>
+      </div>
+      <div>
+        <label class="form-label">Period</label>
+        <select id="period-select">
+          <option value="all_time">All Time</option>
+          <option value="weekly">This Week</option>
+          <option value="daily">Today</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="loadLeaderboard()">Show Rankings →</button>
+  </div>
 
-        async function loadLeaderboard() {
-            const exerciseId = parseInt(document.getElementById('exercise-select').value);
-            const period = document.getElementById('period-select').value;
+  <!-- TABLE -->
+  <div class="fade-up fade-up-2">
+    <div id="leaderboard-content">
+      <div class="empty-state"><strong>Select an exercise</strong>Choose above to see rankings</div>
+    </div>
+  </div>
+</div>
 
-            if (!exerciseId) {
-                alert('Please select an exercise');
-                return;
-            }
+<script src="js/auth.js"></script>
+<script src="js/api.js"></script>
+<script>
+  checkAuth();
 
-            try {
-                const data = await getLeaderboard(exerciseId, period);
-                displayLeaderboard(data);
-            } catch (error) {
-                alert('Error loading leaderboard: ' + error.message);
-            }
-        }
+  async function loadExercises() {
+    try {
+      const exercises = await listExercises();
+      const sel = document.getElementById('exercise-select');
+      sel.innerHTML = '<option value="">Select an exercise…</option>';
+      exercises.forEach(ex => {
+        const o = document.createElement('option');
+        o.value = ex.id; o.textContent = ex.display_name; sel.appendChild(o);
+      });
+    } catch {}
+  }
 
-        function displayLeaderboard(data) {
-            const content = document.getElementById('leaderboard-content');
-            const leaderboard = data.leaderboard;
+  async function loadLeaderboard() {
+    const exId   = parseInt(document.getElementById('exercise-select').value);
+    const period = document.getElementById('period-select').value;
+    if (!exId) { alert('Please select an exercise.'); return; }
 
-            if (leaderboard.length === 0) {
-                content.innerHTML = '<p>No entries yet</p>';
-                return;
-            }
+    const el = document.getElementById('leaderboard-content');
+    el.innerHTML = '<div class="empty-state"><strong>Loading…</strong></div>';
 
-            const userId = parseInt(localStorage.getItem('userId'));
-            const html = `
-                <table class="leaderboard-table">
-                    <thead>
-                        <tr>
-                            <th>Rank</th>
-                            <th>Username</th>
-                            <th>Best Score</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${leaderboard.map(entry => `
-                            <tr class="${entry.user_id === userId ? 'highlight' : ''}">
-                                <td>${entry.rank}</td>
-                                <td>${entry.username}</td>
-                                <td>${entry.best_score}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-            content.innerHTML = html;
-        }
+    try {
+      const data = await getLeaderboard(exId, period);
+      renderLeaderboard(data.leaderboard);
+    } catch (e) {
+      el.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+    }
+  }
 
-        loadExercises();
-    </script>
+  function renderLeaderboard(entries) {
+    const myId = parseInt(localStorage.getItem('userId'));
+    const el   = document.getElementById('leaderboard-content');
+
+    if (!entries.length) {
+      el.innerHTML = '<div class="empty-state"><strong>No entries yet</strong>Be the first to appear here</div>';
+      return;
+    }
+
+    const rankClass = r => r === 1 ? 'gold' : r === 2 ? 'silver' : r === 3 ? 'bronze' : '';
+    const scoreClass = s => s >= 80 ? 'badge-green' : s >= 50 ? 'badge-yellow' : 'badge-red';
+
+    el.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Player</th><th>Best Score</th></tr>
+          </thead>
+          <tbody>
+            ${entries.map(e => `
+              <tr class="${e.user_id === myId ? 'highlight' : ''}">
+                <td><span class="rank-badge ${rankClass(e.rank)}">${e.rank}</span></td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div class="nav-avatar" style="width:28px;height:28px;font-size:11px">${e.username.charAt(0).toUpperCase()}</div>
+                    <span style="font-weight:${e.user_id === myId ? '700' : '500'}">${e.username}</span>
+                    ${e.user_id === myId ? '<span class="badge badge-orange">You</span>' : ''}
+                  </div>
+                </td>
+                <td><span class="badge ${scoreClass(e.best_score)}">${e.best_score}</span></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  loadExercises();
+</script>
 </body>
 </html>
-

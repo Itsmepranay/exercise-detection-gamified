@@ -11,44 +11,38 @@ from app.schemas.session import ExerciseSessionCreate, ExerciseSessionResponse, 
 from app.services.exercise_detector import get_detector
 from app.utils.video_processor import save_uploaded_video
 
+
+
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
-@router.post("/upload", response_model=ExerciseSessionResponse, status_code=201)
+@router.post("/upload", status_code=201)
 async def upload_video(
     user_id: int = Form(...),
     exercise_id: int = Form(...),
     video: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """Upload video, process it, and create exercise session"""
-    # Validate user exists
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Validate exercise exists
+
     exercise = db.query(Exercise).filter(Exercise.id == exercise_id).first()
     if not exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
-    
-    # Get detector for exercise
-    try:
-        detector = get_detector(exercise.name)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    # Generate unique filename
+
     file_extension = Path(video.filename).suffix if video.filename else ".mp4"
     video_filename = f"{uuid.uuid4()}{file_extension}"
-    
+
     try:
-        # Save uploaded video
+        # 1. Save original
         video_path = save_uploaded_video(video, video_filename)
-        
-        # Process video with detector
+
+        # 2. Run detection
+        detector = get_detector(exercise.name)
         results = detector.process_video(video_path)
-        
-        # Create session record
+
+        # 3. Save session (ONLY DB FIELDS)
         session = ExerciseSession(
             user_id=user_id,
             exercise_id=exercise_id,
@@ -57,15 +51,33 @@ async def upload_video(
             error_count=results["error_count"],
             video_filename=video_filename
         )
-        
+
         db.add(session)
         db.commit()
         db.refresh(session)
-        
-        return session
-        
+
+        # 4. RETURN CLEAN RESPONSE
+        return {
+            "id": session.id,
+            "user_id": session.user_id,
+            "exercise_id": session.exercise_id,
+            "score": session.score,
+            "duration_seconds": session.duration_seconds,
+            "error_count": session.error_count,
+
+            # 👇 FRONTEND NEEDS THIS
+            #"processed_video": results["processed_video"],
+            "processed_video": results.get("processed_video"),
+
+            "created_at": session.created_at
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing video: {str(e)}"
+        )
+
 
 @router.post("", response_model=ExerciseSessionResponse, status_code=201)
 def create_session(session_data: ExerciseSessionCreate, db: Session = Depends(get_db)):

@@ -27,3 +27,4 @@ class ExerciseSessionWithDetails(ExerciseSessionResponse):
     user: dict
     exercise: dict
 
+

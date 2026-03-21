@@ -14,3 +14,4 @@ VIDEO_DIR=uploads/videos
 # Leave empty or commented to use default ["*"]
 # CORS_ORIGINS=*
 
+

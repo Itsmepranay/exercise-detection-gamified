@@ -13,3 +13,4 @@ class ExerciseResponse(BaseModel):
     class Config:
         from_attributes = True
 
+

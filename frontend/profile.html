@@ -1,95 +1,136 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Profile - Exercise Competition Platform</title>
-    <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile — RepTrack</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>My Profile</h1>
-            <nav>
-                <a href="index.html">Home</a>
-            </nav>
-        </header>
 
-        <div class="section">
-            <h2 id="profile-username">Loading...</h2>
-        </div>
-
-        <div class="section">
-            <h2>My Sessions</h2>
-            <div id="sessions-content">Loading...</div>
-        </div>
+<nav class="navbar">
+  <a class="nav-brand" href="index.html">RepTrack</a>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="exercise.html">Exercises</a></li>
+    <li><a href="challenges.html">Challenges</a></li>
+    <li><a href="leaderboard.html">Leaderboard</a></li>
+    <li><a href="profile.html" class="active">Profile</a></li>
+  </ul>
+  <div class="nav-right">
+    <div class="nav-user">
+      <div class="nav-avatar" id="nav-avatar">?</div>
+      <span id="nav-username"></span>
     </div>
+    <button class="nav-logout" onclick="logout()">Logout</button>
+  </div>
+</nav>
 
-    <script src="js/auth.js"></script>
-    <script src="js/api.js"></script>
-    <script>
-        checkAuth();
+<div class="page">
 
-        async function loadProfile() {
-            const userId = parseInt(localStorage.getItem('userId'));
-            const username = localStorage.getItem('username');
-            
-            document.getElementById('profile-username').textContent = `Username: ${username}`;
+  <!-- PROFILE HEADER -->
+  <div class="welcome-bar fade-up" id="profile-header">
+    <div style="display:flex;align-items:center;gap:20px">
+      <div style="width:56px;height:56px;background:var(--orange);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-size:26px;font-weight:900;color:var(--black)" id="profile-avatar">?</div>
+      <div>
+        <div class="welcome-name" id="profile-username">—</div>
+        <div class="welcome-sub" id="profile-joined">Loading…</div>
+      </div>
+    </div>
+    <div class="flex gap-8">
+      <a href="exercise.html" class="btn btn-primary">New Session</a>
+    </div>
+  </div>
 
-            try {
-                const sessions = await getUserSessions(userId);
-                displaySessions(sessions);
-            } catch (error) {
-                document.getElementById('sessions-content').innerHTML = '<p>Error loading sessions</p>';
-            }
-        }
+  <!-- STATS -->
+  <div class="stats-grid fade-up fade-up-1" id="profile-stats">
+    <div class="stat-card">
+      <div class="stat-label">Total Sessions</div>
+      <div class="stat-value accent" id="ps-sessions">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Best Score</div>
+      <div class="stat-value green" id="ps-best">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Score</div>
+      <div class="stat-value" id="ps-avg">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Errors</div>
+      <div class="stat-value yellow" id="ps-errors">—</div>
+    </div>
+  </div>
 
-        function displaySessions(sessions) {
-            if (sessions.length === 0) {
-                document.getElementById('sessions-content').innerHTML = '<p>No sessions yet</p>';
-                return;
-            }
+  <!-- SESSIONS TABLE -->
+  <div class="fade-up fade-up-2">
+    <div class="section-heading">Session History</div>
+    <div id="sessions-content">
+      <div class="empty-state"><strong>No sessions yet</strong>Upload your first exercise video</div>
+    </div>
+  </div>
 
-            const html = `
-                <table class="sessions-table">
-                    <thead>
-                        <tr>
-                            <th>Exercise</th>
-                            <th>Score</th>
-                            <th>Duration</th>
-                            <th>Errors</th>
-                            <th>Date</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${sessions.map(s => `
-                            <tr>
-                                <td>${s.exercise.display_name}</td>
-                                <td>${s.score}</td>
-                                <td>${s.duration_seconds ? s.duration_seconds.toFixed(1) + 's' : 'N/A'}</td>
-                                <td>${s.error_count}</td>
-                                <td>${new Date(s.created_at).toLocaleString()}</td>
-                                <td>
-                                    ${s.annotated_video_filename ? 
-                                        `<button onclick="viewAnnotatedVideo(${s.id})">View Annotated Video</button>` : 
-                                        'Processing...'}
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-            document.getElementById('sessions-content').innerHTML = html;
-        }
+</div>
 
-        function viewAnnotatedVideo(sessionId) {
-            // Open the annotated video in a new tab
-            window.open(`${API_BASE}/api/sessions/${sessionId}/annotated-video`, '_blank');
-        }
+<script src="js/auth.js"></script>
+<script src="js/api.js"></script>
+<script>
+  checkAuth();
 
-        loadProfile();
-    </script>
+  async function loadProfile() {
+    const userId   = parseInt(localStorage.getItem('userId'));
+    const username = localStorage.getItem('username') || '—';
+
+    document.getElementById('profile-username').textContent = username.toUpperCase();
+    document.getElementById('profile-avatar').textContent   = username.charAt(0).toUpperCase();
+
+    try {
+      const user = await getUser(userId);
+      document.getElementById('profile-joined').textContent =
+        'Member since ' + new Date(user.created_at).toLocaleDateString('en-US', { year:'numeric', month:'long' });
+    } catch {}
+
+    try {
+      const sessions = await getUserSessions(userId);
+      if (!sessions.length) return;
+
+      // Stats
+      const best  = sessions.reduce((m, s) => s.score > m ? s.score : m, 0);
+      const avg   = Math.round(sessions.reduce((a, s) => a + s.score, 0) / sessions.length);
+      const errs  = sessions.reduce((a, s) => a + s.error_count, 0);
+
+      document.getElementById('ps-sessions').textContent = sessions.length;
+      document.getElementById('ps-best').textContent     = best;
+      document.getElementById('ps-avg').textContent      = avg;
+      document.getElementById('ps-errors').textContent   = errs;
+
+      const scoreClass = s => s >= 80 ? 'badge-green' : s >= 50 ? 'badge-yellow' : 'badge-red';
+
+      document.getElementById('sessions-content').innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Exercise</th><th>Score</th><th>Duration</th><th>Errors</th><th>Date</th></tr>
+            </thead>
+            <tbody>
+              ${sessions.map(s => `
+                <tr>
+                  <td><strong>${s.exercise.display_name}</strong></td>
+                  <td><span class="badge ${scoreClass(s.score)}">${s.score}</span></td>
+                  <td>${s.duration_seconds ? s.duration_seconds.toFixed(1) + 's' : '—'}</td>
+                  <td>${s.error_count}</td>
+                  <td class="text-muted">${new Date(s.created_at).toLocaleString()}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    } catch (e) {
+      document.getElementById('sessions-content').innerHTML =
+        `<div class="alert alert-error">Could not load sessions: ${e.message}</div>`;
+    }
+  }
+
+  loadProfile();
+</script>
 </body>
 </html>
-

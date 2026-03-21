@@ -30,3 +30,4 @@ class ChallengeWithDetails(ChallengeResponse):
     winner: Optional[dict] = None
     sessions: list = []
 
+

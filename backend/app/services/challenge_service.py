@@ -72,3 +72,4 @@ def update_challenge_status(challenge: Challenge, db: Session):
         challenge.status = ChallengeStatus.ACTIVE
     # else: remains PENDING
 
+

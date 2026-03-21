@@ -1,222 +1,190 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Exercise - Exercise Competition Platform</title>
-    <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exercises — RepTrack</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Start Exercise</h1>
-            <nav>
-                <a href="index.html">Home</a>
-            </nav>
-        </header>
 
-        <div class="section">
-            <h2>Select Exercise</h2>
-            <select id="exercise-select">
-                <option value="">Loading exercises...</option>
-            </select>
-        </div>
+<nav class="navbar">
+  <a class="nav-brand" href="index.html">RepTrack</a>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="exercise.html" class="active">Exercises</a></li>
+    <li><a href="challenges.html">Challenges</a></li>
+    <li><a href="leaderboard.html">Leaderboard</a></li>
+    <li><a href="profile.html">Profile</a></li>
+  </ul>
+  <div class="nav-right">
+    <div class="nav-user">
+      <div class="nav-avatar" id="nav-avatar">?</div>
+      <span id="nav-username"></span>
+    </div>
+    <button class="nav-logout" onclick="logout()">Logout</button>
+  </div>
+</nav>
 
-        <div class="section">
-            <h2>Upload Video</h2>
-            <input type="file" id="video-input" accept="video/*">
-            <button id="upload-btn" onclick="uploadVideo()" disabled>Upload & Process</button>
-        </div>
+<div class="page">
+  <div class="page-header fade-up">
+    <div>
+      <div class="page-title">Upload Exercise</div>
+      <div class="page-subtitle">Submit a video to get your form score</div>
+    </div>
+  </div>
 
-        <div id="processing-section" class="section" style="display: none;">
-            <h3>Processing video...</h3>
-            <div class="progress-bar">
-                <div id="progress-fill" class="progress-fill"></div>
-            </div>
-        </div>
+  <!-- FORM CARD -->
+  <div class="card fade-up fade-up-1 mb-16" style="max-width:560px">
+    <div class="card-title">Session Setup</div>
 
-        <div id="results-section" class="section" style="display: none;">
-            <h2>Results</h2>
-            <div id="results-content"></div>
-            <button onclick="location.href='exercise.html'">Do Another Exercise</button>
-        </div>
+    <div class="form-group">
+      <label class="form-label">Exercise Type</label>
+      <select id="exercise-select">
+        <option value="">Loading exercises...</option>
+      </select>
     </div>
 
-    <script src="js/auth.js"></script>
-    <script src="js/api.js"></script>
-    <script src="js/exercise.js"></script>
-    <script>
-        // Check for pre-selected exercise and challenge from URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const preselectedExercise = urlParams.get('exercise');
-        const pendingChallenge = urlParams.get('challenge');
-        
-        if (preselectedExercise) {
-            document.getElementById('exercise-select').value = preselectedExercise;
-            updateUploadButton();
-        }
+    <div class="form-group">
+      <label class="form-label">Video File</label>
+      <input type="file" id="video-input" accept="video/*">
+    </div>
 
-        // Enable upload button when exercise and video selected
-        document.getElementById('exercise-select').addEventListener('change', updateUploadButton);
-        document.getElementById('video-input').addEventListener('change', updateUploadButton);
+    <button id="upload-btn" class="btn btn-primary" onclick="uploadVideo()" disabled style="width:100%">
+      Upload &amp; Analyse →
+    </button>
+  </div>
 
-        function updateUploadButton() {
-            const exerciseId = document.getElementById('exercise-select').value;
-            const videoFile = document.getElementById('video-input').files[0];
-            document.getElementById('upload-btn').disabled = !exerciseId || !videoFile;
-        }
+  <!-- PROCESSING -->
+  <div id="processing-section" class="hidden" style="max-width:560px">
+    <div class="processing-box fade-up">
+      <h3>Analysing your video…</h3>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+      <p class="text-muted" style="margin-top:8px;font-size:13px">MediaPipe is extracting pose landmarks — this may take a moment</p>
+    </div>
+  </div>
 
-        async function loadExercises() {
-            console.log('Loading exercises...');
-            try {
-                const exercises = await listExercises();
-                console.log('Exercises loaded:', exercises);
-                const select = document.getElementById('exercise-select');
-                select.innerHTML = '<option value="">Select an exercise...</option>';
-                exercises.forEach(ex => {
-                    const option = document.createElement('option');
-                    option.value = ex.id;
-                    option.textContent = ex.display_name;
-                    select.appendChild(option);
-                });
-                console.log('Exercises populated in dropdown');
-            } catch (error) {
-                console.error('Error loading exercises:', error);
-                alert('Error loading exercises: ' + error.message);
-            }
-        }
+  <!-- RESULTS -->
+  <div id="results-section" class="hidden" style="max-width:560px">
+    <div class="result-card fade-up">
+      <h3>Session Complete</h3>
+      <div class="result-grid" id="results-grid"></div>
+      <div id="results-actions" class="flex gap-8 flex-wrap"></div>
+    </div>
+    <div id="submit-feedback"></div>
+  </div>
 
-        async function uploadVideo() {
-            const exerciseId = parseInt(document.getElementById('exercise-select').value);
-            const videoFile = document.getElementById('video-input').files[0];
-            const userId = parseInt(localStorage.getItem('userId'));
+</div>
 
-            if (!exerciseId || !videoFile || !userId) {
-                alert('Please select an exercise and video file');
-                return;
-            }
+<script src="js/auth.js"></script>
+<script src="js/api.js"></script>
+<script>
+  checkAuth();
 
-            // Show processing section
-            document.getElementById('processing-section').style.display = 'block';
-            document.getElementById('results-section').style.display = 'none';
-            document.getElementById('upload-btn').disabled = true;
+  const urlParams         = new URLSearchParams(window.location.search);
+  const preselectedEx     = urlParams.get('exercise');
+  const pendingChallengeId = urlParams.get('challenge');
 
-            // Simulate progress (since we can't track real progress easily)
-            let progress = 0;
-            const progressInterval = setInterval(() => {
-                progress += 10;
-                if (progress <= 90) {
-                    document.getElementById('progress-fill').style.width = progress + '%';
-                }
-            }, 500);
+  document.getElementById('exercise-select').addEventListener('change', updateBtn);
+  document.getElementById('video-input').addEventListener('change', updateBtn);
 
-            try {
-                const session = await uploadExerciseVideo(userId, exerciseId, videoFile);
-                clearInterval(progressInterval);
-                document.getElementById('progress-fill').style.width = '100%';
-                
-                setTimeout(() => {
-                    showResults(session);
-                }, 500);
-            } catch (error) {
-                clearInterval(progressInterval);
-                document.getElementById('processing-section').style.display = 'none';
-                document.getElementById('upload-btn').disabled = false;
-                alert('Error processing video: ' + error.message);
-            }
-        }
+  function updateBtn() {
+    const ex    = document.getElementById('exercise-select').value;
+    const video = document.getElementById('video-input').files[0];
+    document.getElementById('upload-btn').disabled = !ex || !video;
+  }
 
-        function showResults(session) {
-            document.getElementById('processing-section').style.display = 'none';
-            document.getElementById('results-section').style.display = 'block';
-            
-            const pendingChallenge = localStorage.getItem('pendingChallengeId');
-            
-            const resultsHtml = `
-                <div class="result-card">
-                    <h3>Exercise Completed!</h3>
-                    <p><strong>Score:</strong> ${session.score}</p>
-                    <p><strong>Duration:</strong> ${session.duration_seconds ? session.duration_seconds.toFixed(1) + 's' : 'N/A'}</p>
-                    <p><strong>Errors:</strong> ${session.error_count}</p>
-                    <p><strong>Date:</strong> ${new Date(session.created_at).toLocaleString()}</p>
-                    <div id="annotated-video-section">
-                        <p>Annotated video will be available shortly...</p>
-                    </div>
-                    ${pendingChallenge ? '<p><em>Submitting to challenge...</em></p>' : '<button onclick="location.href=\'challenges.html\'">Submit to Challenge</button>'}
-                    <button onclick="location.href='challenges.html'">Back to Challenges</button>
-                </div>
-            `;
-            document.getElementById('results-content').innerHTML = resultsHtml;
-            
-            // Store session ID for challenge submission
-            localStorage.setItem('lastSessionId', session.id);
-            
-            // Check for annotated video after a delay
-            setTimeout(() => checkAnnotatedVideo(session.id), 3000);
-            
-            // Auto-submit to challenge if this was for a challenge
-            const pendingChallengeId = localStorage.getItem('pendingChallengeId');
-            if (pendingChallengeId) {
-                autoSubmitToChallenge(parseInt(pendingChallengeId), session.id);
-            }
-        }
-        
-        async function autoSubmitToChallenge(challengeId, sessionId) {
-            try {
-                await submitChallengeSession(challengeId, sessionId);
-                document.getElementById('results-content').innerHTML += `
-                    <div class="success-message">
-                        <p>✅ Session automatically submitted to challenge!</p>
-                        <button onclick="location.href='challenges.html'">View Challenge Status</button>
-                    </div>
-                `;
-                // Clear pending challenge
-                localStorage.removeItem('pendingChallengeId');
-                localStorage.removeItem('pendingExerciseId');
-            } catch (error) {
-                document.getElementById('results-content').innerHTML += `
-                    <div class="error-message">
-                        <p>❌ Failed to submit to challenge: ${error.message}</p>
-                        <button onclick="manualSubmitToChallenge(${challengeId}, ${sessionId})">Try Again</button>
-                    </div>
-                `;
-            }
-        }
-        
-        async function manualSubmitToChallenge(challengeId, sessionId) {
-            try {
-                await submitChallengeSession(challengeId, sessionId);
-                alert('Session submitted to challenge!');
-                location.href = 'challenges.html';
-            } catch (error) {
-                alert('Error submitting: ' + error.message);
-            }
-        }
+  async function loadExercises() {
+    try {
+      const exercises = await listExercises();
+      const sel = document.getElementById('exercise-select');
+      sel.innerHTML = '<option value="">Select an exercise…</option>';
+      exercises.forEach(ex => {
+        const opt = document.createElement('option');
+        opt.value = ex.id;
+        opt.textContent = ex.display_name;
+        sel.appendChild(opt);
+      });
+      if (preselectedEx) { sel.value = preselectedEx; updateBtn(); }
+    } catch (e) { console.error('Error loading exercises:', e); }
+  }
 
-        async function checkAnnotatedVideo(sessionId) {
-            try {
-                const session = await getSession(sessionId);
-                const section = document.getElementById('annotated-video-section');
-                if (session.annotated_video_filename) {
-                    section.innerHTML = `<button onclick="viewAnnotatedVideo(${sessionId})">View Annotated Video</button>`;
-                } else {
-                    section.innerHTML = '<p>Annotated video is still processing...</p>';
-                    // Check again in 5 seconds
-                    setTimeout(() => checkAnnotatedVideo(sessionId), 5000);
-                }
-            } catch (error) {
-                console.error('Error checking annotated video:', error);
-            }
-        }
+  async function uploadVideo() {
+    const exerciseId = parseInt(document.getElementById('exercise-select').value);
+    const videoFile  = document.getElementById('video-input').files[0];
+    const userId     = parseInt(localStorage.getItem('userId'));
+    if (!exerciseId || !videoFile || !userId) return;
 
-        function viewAnnotatedVideo(sessionId) {
-            // Open the annotated video in a new tab
-            window.open(`${API_BASE}/api/sessions/${sessionId}/annotated-video`, '_blank');
-        }
+    document.getElementById('processing-section').classList.remove('hidden');
+    document.getElementById('results-section').classList.add('hidden');
+    document.getElementById('upload-btn').disabled = true;
 
-        // Load exercises when page loads
-        loadExercises();
-    </script>
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress = Math.min(progress + 8, 90);
+      document.getElementById('progress-fill').style.width = progress + '%';
+    }, 500);
+
+    try {
+      const session = await uploadExerciseVideo(userId, exerciseId, videoFile);
+      clearInterval(interval);
+      document.getElementById('progress-fill').style.width = '100%';
+      setTimeout(() => showResults(session), 400);
+    } catch (err) {
+      clearInterval(interval);
+      document.getElementById('processing-section').classList.add('hidden');
+      document.getElementById('upload-btn').disabled = false;
+      alert('Error processing video: ' + err.message);
+    }
+  }
+
+  function showResults(session) {
+    document.getElementById('processing-section').classList.add('hidden');
+    document.getElementById('results-section').classList.remove('hidden');
+
+    localStorage.setItem('lastSessionId', session.id);
+
+    const scoreClass = session.score >= 80 ? 'accent' : session.score >= 50 ? 'yellow' : '';
+
+    document.getElementById('results-grid').innerHTML = `
+      <div class="result-metric">
+        <div class="result-metric-label">Form Score</div>
+        <div class="result-metric-value ${scoreClass}">${session.score}</div>
+      </div>
+      <div class="result-metric">
+        <div class="result-metric-label">Duration</div>
+        <div class="result-metric-value">${session.duration_seconds ? session.duration_seconds.toFixed(1) + 's' : '—'}</div>
+      </div>
+      <div class="result-metric">
+        <div class="result-metric-label">Errors</div>
+        <div class="result-metric-value">${session.error_count}</div>
+      </div>`;
+
+    document.getElementById('results-actions').innerHTML = `
+      <a href="exercise.html" class="btn btn-outline">New Session</a>
+      <a href="challenges.html" class="btn btn-ghost">Submit to Challenge</a>`;
+
+    if (pendingChallengeId) {
+      autoSubmit(parseInt(pendingChallengeId), session.id);
+    }
+  }
+
+  async function autoSubmit(challengeId, sessionId) {
+    try {
+      await submitChallengeSession(challengeId, sessionId);
+      localStorage.removeItem('pendingChallengeId');
+      localStorage.removeItem('pendingExerciseId');
+      document.getElementById('submit-feedback').innerHTML = `
+        <div class="alert alert-success mt-16">Session submitted to challenge! <a href="challenges.html" style="text-decoration:underline">View challenge →</a></div>`;
+    } catch (err) {
+      document.getElementById('submit-feedback').innerHTML = `
+        <div class="alert alert-error mt-16">Could not auto-submit: ${err.message}</div>`;
+    }
+  }
+
+  loadExercises();
+</script>
 </body>
 </html>
-

@@ -1,113 +1,210 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Exercise Competition Platform</title>
-    <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RepTrack — Exercise Competition</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Exercise Competition Platform</h1>
-        </header>
 
-        <div id="login-section" class="section">
-            <h2>Enter Your Username</h2>
-            <input type="text" id="username-input" placeholder="Username" maxlength="50">
-            <button onclick="login()">Start</button>
-        </div>
+<!-- NAVBAR (hidden on login, shown on dashboard) -->
+<nav class="navbar hidden" id="main-nav">
+  <a class="nav-brand" href="index.html">RepTrack</a>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="exercise.html">Exercises</a></li>
+    <li><a href="challenges.html">Challenges</a></li>
+    <li><a href="leaderboard.html">Leaderboard</a></li>
+    <li><a href="profile.html">Profile</a></li>
+  </ul>
+  <div class="nav-right">
+    <div class="nav-user">
+      <div class="nav-avatar" id="nav-avatar">?</div>
+      <span id="nav-username"></span>
+    </div>
+    <button class="nav-logout" onclick="logout()">Logout</button>
+  </div>
+</nav>
 
-        <div id="dashboard-section" class="section" style="display: none;">
-            <h2>Welcome, <span id="username-display"></span>!</h2>
-            
-            <div class="quick-stats">
-                <h3>Quick Stats</h3>
-                <div id="quick-stats-content">Loading...</div>
-            </div>
+<!-- ── LOGIN ───────────────────────────────────────────────── -->
+<div id="login-section">
+  <div class="login-container fade-up">
+    <div class="login-brand">Rep<span>Track</span></div>
+    <p class="login-tagline">Upload. Compete. Dominate the leaderboard.</p>
 
-            <div class="action-buttons">
-                <button onclick="location.href='exercise.html'">Start Exercise</button>
-                <button onclick="location.href='leaderboard.html'">View Leaderboards</button>
-                <button onclick="location.href='challenges.html'">Challenges</button>
-                <button onclick="location.href='profile.html'">My Profile</button>
-            </div>
+    <div class="login-card">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input type="text" id="username-input" placeholder="Enter your username" maxlength="50"
+               onkeydown="if(event.key==='Enter') login()">
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="login()">Get Started →</button>
+      <div id="login-error" class="alert alert-error hidden" style="margin-top:12px"></div>
+    </div>
+  </div>
+</div>
 
-            <div class="active-challenges">
-                <h3>Active Challenges</h3>
-                <div id="active-challenges-content">Loading...</div>
-            </div>
-        </div>
+<!-- ── DASHBOARD ───────────────────────────────────────────── -->
+<div id="dashboard-section" class="hidden">
+  <div class="page">
+
+    <div class="welcome-bar fade-up">
+      <div>
+        <div class="welcome-name">Welcome back, <span id="username-display">—</span></div>
+        <div class="welcome-sub">Ready for your next session?</div>
+      </div>
+      <div class="flex gap-8">
+        <a href="exercise.html" class="btn btn-primary">Upload Video</a>
+        <a href="challenges.html" class="btn btn-outline">View Challenges</a>
+      </div>
     </div>
 
-    <script src="js/auth.js"></script>
-    <script src="js/api.js"></script>
-    <script>
-        // Check if user is logged in
-        const userId = localStorage.getItem('userId');
-        const username = localStorage.getItem('username');
-        
-        if (userId && username) {
-            document.getElementById('login-section').style.display = 'none';
-            document.getElementById('dashboard-section').style.display = 'block';
-            document.getElementById('username-display').textContent = username;
-            loadDashboard(userId);
-        }
+    <div class="stats-grid fade-up fade-up-1">
+      <div class="stat-card">
+        <div class="stat-label">Sessions</div>
+        <div class="stat-value accent" id="stat-sessions">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Best Score</div>
+        <div class="stat-value green" id="stat-best">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Challenges</div>
+        <div class="stat-value yellow" id="stat-challenges">—</div>
+      </div>
+    </div>
 
-        async function login() {
-            const username = document.getElementById('username-input').value.trim();
-            if (!username) {
-                alert('Please enter a username');
-                return;
-            }
+    <div class="fade-up fade-up-2">
+      <div class="section-heading">Active Challenges</div>
+      <div id="active-challenges-content">
+        <div class="empty-state"><strong>No active challenges</strong>Challenge a friend to get started</div>
+      </div>
+    </div>
 
-            try {
-                const user = await createUser(username);
-                localStorage.setItem('userId', user.id);
-                localStorage.setItem('username', user.username);
-                location.reload();
-            } catch (error) {
-                if (error.message.includes('already exists')) {
-                    // User exists, try to find them
-                    const users = await listUsers();
-                    const user = users.find(u => u.username === username);
-                    if (user) {
-                        localStorage.setItem('userId', user.id);
-                        localStorage.setItem('username', user.username);
-                        location.reload();
-                    } else {
-                        alert('Error: ' + error.message);
-                    }
-                } else {
-                    alert('Error: ' + error.message);
-                }
-            }
-        }
+    <div class="fade-up fade-up-3 mt-24">
+      <div class="section-heading">Recent Sessions</div>
+      <div id="recent-sessions-content">
+        <div class="empty-state"><strong>No sessions yet</strong>Upload your first video</div>
+      </div>
+    </div>
 
-        async function loadDashboard(userId) {
-            // Load quick stats
-            try {
-                const sessions = await getUserSessions(userId, null, 0, 5);
-                const statsHtml = sessions.length > 0 
-                    ? `<p>Recent sessions: ${sessions.length}</p>`
-                    : '<p>No sessions yet. Start your first exercise!</p>';
-                document.getElementById('quick-stats-content').innerHTML = statsHtml;
-            } catch (error) {
-                document.getElementById('quick-stats-content').innerHTML = '<p>Error loading stats</p>';
-            }
+  </div>
+</div>
 
-            // Load active challenges
-            try {
-                const challenges = await getUserChallenges(userId, 'active');
-                const challengesHtml = challenges.length > 0
-                    ? challenges.map(c => `<div class="challenge-item">${c.exercise.display_name} challenge with ${c.opponent.username} - ${c.status}</div>`).join('')
-                    : '<p>No active challenges</p>';
-                document.getElementById('active-challenges-content').innerHTML = challengesHtml;
-            } catch (error) {
-                document.getElementById('active-challenges-content').innerHTML = '<p>Error loading challenges</p>';
-            }
-        }
-    </script>
+<script src="js/auth.js"></script>
+<script src="js/api.js"></script>
+<script>
+  const storedId   = localStorage.getItem('userId');
+  const storedUser = localStorage.getItem('username');
+
+  if (storedId && storedUser) {
+    showDashboard(storedUser, storedId);
+  }
+
+  async function login() {
+    const username = document.getElementById('username-input').value.trim();
+    const errEl    = document.getElementById('login-error');
+    errEl.classList.add('hidden');
+
+    if (!username) { showErr('Please enter a username.'); return; }
+
+    try {
+      const user = await createUser(username);
+      storeUser(user);
+    } catch (e) {
+      if (e.message.includes('already exists')) {
+        try {
+          const users = await listUsers();
+          const user  = users.find(u => u.username === username);
+          if (user) { storeUser(user); }
+          else showErr('Username conflict. Try another.');
+        } catch { showErr('Could not connect to server.'); }
+      } else {
+        showErr(e.message);
+      }
+    }
+  }
+
+  function storeUser(user) {
+    localStorage.setItem('userId', user.id);
+    localStorage.setItem('username', user.username);
+    showDashboard(user.username, user.id);
+  }
+
+  function showErr(msg) {
+    const el = document.getElementById('login-error');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  function showDashboard(username, userId) {
+    document.getElementById('login-section').classList.add('hidden');
+    document.getElementById('dashboard-section').classList.remove('hidden');
+    document.getElementById('main-nav').classList.remove('hidden');
+    document.getElementById('username-display').textContent = username.toUpperCase();
+
+    const av = document.getElementById('nav-avatar');
+    const nv = document.getElementById('nav-username');
+    if (av) av.textContent = username.charAt(0).toUpperCase();
+    if (nv) nv.textContent = username;
+
+    // highlight home link
+    document.querySelectorAll('.nav-links a').forEach(a => {
+      if (a.getAttribute('href') === 'index.html') a.classList.add('active');
+    });
+
+    loadDashboard(userId);
+  }
+
+  async function loadDashboard(userId) {
+    // Sessions
+    try {
+      const sessions = await getUserSessions(userId, null, 0, 100);
+      document.getElementById('stat-sessions').textContent = sessions.length;
+      const best = sessions.reduce((m, s) => s.score > m ? s.score : m, 0);
+      document.getElementById('stat-best').textContent = sessions.length ? best : '—';
+
+      if (sessions.length > 0) {
+        const recent = sessions.slice(0, 5);
+        document.getElementById('recent-sessions-content').innerHTML = `
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Exercise</th><th>Score</th><th>Duration</th><th>Errors</th><th>Date</th></tr></thead>
+              <tbody>
+                ${recent.map(s => `
+                  <tr>
+                    <td><strong>${s.exercise.display_name}</strong></td>
+                    <td><span class="badge ${s.score >= 80 ? 'badge-green' : s.score >= 50 ? 'badge-yellow' : 'badge-red'}">${s.score}</span></td>
+                    <td>${s.duration_seconds ? s.duration_seconds.toFixed(1) + 's' : '—'}</td>
+                    <td>${s.error_count}</td>
+                    <td class="text-muted">${new Date(s.created_at).toLocaleDateString()}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`;
+      }
+    } catch {}
+
+    // Challenges
+    try {
+      const challenges = await getUserChallenges(userId, 'active');
+      document.getElementById('stat-challenges').textContent = challenges.length;
+      if (challenges.length > 0) {
+        document.getElementById('active-challenges-content').innerHTML = challenges.map(c => `
+          <div class="challenge-item challenge-active">
+            <div class="challenge-meta">
+              <div class="challenge-exercise">${c.exercise.display_name}</div>
+              <div class="challenge-players">${c.challenger.username} vs ${c.opponent.username}</div>
+            </div>
+            <div class="challenge-actions">
+              <span class="badge badge-orange">Active</span>
+              <a href="exercise.html?exercise=${c.exercise_id}&challenge=${c.id}" class="btn btn-sm btn-primary">Compete</a>
+            </div>
+          </div>`).join('');
+      }
+    } catch {}
+  }
+</script>
 </body>
 </html>
-
