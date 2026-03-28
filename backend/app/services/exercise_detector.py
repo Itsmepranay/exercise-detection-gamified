@@ -1171,7 +1171,7 @@ class PlankDetector(ExerciseDetector):
             },
         }
         
-        
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LungeGCN — shared model class for both stage and error detectors
 #
@@ -1206,10 +1206,8 @@ _LUNGE_SKELETON_EDGES = [
     ("right_hip",      "right_knee"),
     ("left_knee",      "left_ankle"),
     ("right_knee",     "right_ankle"),
-    # Cross-knee edges — capture asymmetric lunge stance
     ("left_hip",       "right_knee"),
     ("right_hip",      "left_knee"),
-    # Feet
     ("left_ankle",     "left_heel"),
     ("right_ankle",    "right_heel"),
     ("left_ankle",     "left_foot_index"),
@@ -1224,14 +1222,12 @@ for _lu, _lv in _LUNGE_SKELETON_EDGES:
     _lunge_dst += [_lj, _li]
 _LUNGE_EDGE_INDEX = torch.tensor([_lunge_src, _lunge_dst], dtype=torch.long)
 
-# Feature column order — must match the scaler fitted during training
 _LUNGE_FEATURE_COLS = [
     f"{lm}_{coord}"
     for lm in _LUNGE_LANDMARKS
     for coord in ["x", "y", "z", "v"]
 ]
 
-# MediaPipe landmark names in the same order as _LUNGE_LANDMARKS
 _LUNGE_LM_NAMES = [
     "NOSE",
     "LEFT_SHOULDER",    "RIGHT_SHOULDER",
@@ -1244,24 +1240,16 @@ _LUNGE_LM_NAMES = [
 
 
 class _LungeGCN(nn.Module):
-    """
-    3-layer GCNConv → flatten → FC head.
-    Reused for both stage (n_classes=3) and error (n_classes=2) models.
-    """
     def __init__(self, in_feats=4, hidden=64, out_feats=32,
                  n_classes=3, dropout=0.4):
         super().__init__()
         self.out_feats = out_feats
-
         self.conv1 = GCNConv(in_feats, hidden)
         self.conv2 = GCNConv(hidden,   hidden)
         self.conv3 = GCNConv(hidden,   out_feats)
-
         self.bn1 = nn.BatchNorm1d(hidden)
         self.bn2 = nn.BatchNorm1d(hidden)
         self.bn3 = nn.BatchNorm1d(out_feats)
-
-        # 13 × 32 = 416
         self.head = nn.Sequential(
             nn.Linear(_LUNGE_N_NODES * out_feats, 128),
             nn.ReLU(),
@@ -1286,48 +1274,29 @@ class _LungeGCN(nn.Module):
 
 
 def _normalize_lunge_row(row: dict) -> dict:
-    """
-    Camera-invariant normalisation — identical to the training notebook:
-      1. Subtract torso centre  (shoulder + hip midpoint average)
-      2. Divide by torso size   (shoulder-mid to hip-mid distance)
-    """
     centre_x = (row["left_shoulder_x"] + row["right_shoulder_x"] +
                  row["left_hip_x"]      + row["right_hip_x"]) / 4
     centre_y = (row["left_shoulder_y"] + row["right_shoulder_y"] +
                  row["left_hip_y"]      + row["right_hip_y"]) / 4
-
     sh_mid_x = (row["left_shoulder_x"] + row["right_shoulder_x"]) / 2
     sh_mid_y = (row["left_shoulder_y"] + row["right_shoulder_y"]) / 2
     hi_mid_x = (row["left_hip_x"]      + row["right_hip_x"])      / 2
     hi_mid_y = (row["left_hip_y"]      + row["right_hip_y"])      / 2
-
     torso_size = ((sh_mid_x - hi_mid_x) ** 2 +
                   (sh_mid_y - hi_mid_y) ** 2) ** 0.5 + 1e-6
-
     out = dict(row)
     for lm in _LUNGE_LANDMARKS:
         out[f"{lm}_x"] = (row[f"{lm}_x"] - centre_x) / torso_size
         out[f"{lm}_y"] = (row[f"{lm}_y"] - centre_y) / torso_size
         out[f"{lm}_z"] =  row[f"{lm}_z"]              / torso_size
-        # visibility unchanged
     return out
 
 
 def _predict_lunge_gcn(raw_row: dict, gcn_model: _LungeGCN,
                         scaler, device: torch.device) -> tuple:
-    """
-    Run one frame through a LungeGCN model.
-
-    Returns
-    -------
-    predicted_idx : int   — raw class index from argmax
-    probs         : list  — softmax probabilities for all classes
-    confidence    : float — max probability
-    """
     norm        = _normalize_lunge_row(raw_row)
     feat_vec    = [[norm[col] for col in _LUNGE_FEATURE_COLS]]
     feat_scaled = scaler.transform(feat_vec)
-
     x_node = torch.tensor(
         feat_scaled[0].reshape(_LUNGE_N_NODES, _LUNGE_N_FEATS),
         dtype=torch.float
@@ -1335,16 +1304,166 @@ def _predict_lunge_gcn(raw_row: dict, gcn_model: _LungeGCN,
     data       = Data(x=x_node, edge_index=_LUNGE_EDGE_INDEX)
     data.batch = torch.zeros(_LUNGE_N_NODES, dtype=torch.long)
     data       = data.to(device)
-
     with torch.no_grad():
-        logits = gcn_model(data)              # [1, n_classes]
-        probs  = F.softmax(logits, dim=1)[0]  # [n_classes]
-
+        logits = gcn_model(data)
+        probs  = F.softmax(logits, dim=1)[0]
     probs_list    = probs.cpu().numpy().tolist()
     predicted_idx = int(probs.argmax().item())
     confidence    = float(probs[predicted_idx].item())
-
     return predicted_idx, probs_list, confidence
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lunge annotation helpers
+# All colours in BGR (OpenCV convention)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_L_BLACK  = (15,  15,  15)
+_L_WHITE  = (245, 245, 240)
+_L_ORANGE = (43,  107, 255)   # BGR for RepTrack orange #FF6B2B
+_L_GREEN  = (80,  210,  60)   # correct form
+_L_RED    = (50,   55, 220)   # error / warning
+_L_YELLOW = (0,   205, 255)   # mid stage / caution
+_L_BLUE   = (210, 140,  50)   # init stage
+
+# Stage label → (display string, pill colour)
+_STAGE_DISPLAY = {
+    "init": ("STANDING",   _L_BLUE),
+    "mid" : ("DESCENT",    _L_YELLOW),
+    "down": ("FULL LUNGE", _L_GREEN),
+    ""    : ("---",        _L_WHITE),
+}
+
+
+def _lunge_draw_skeleton(frame, mp_results, has_error: bool):
+    """Full-body skeleton; green when correct, red on any error."""
+    import mediapipe as mp
+    mp_drawing  = mp.solutions.drawing_utils
+    mp_pose_mod = mp.solutions.pose
+
+    lm_col   = _L_RED  if has_error else _L_GREEN
+    conn_col = (60, 60, 200) if has_error else (60, 200, 60)
+
+    mp_drawing.draw_landmarks(
+        frame,
+        mp_results.pose_landmarks,
+        mp_pose_mod.POSE_CONNECTIONS,
+        mp_drawing.DrawingSpec(color=lm_col,  thickness=2, circle_radius=3),
+        mp_drawing.DrawingSpec(color=conn_col, thickness=2, circle_radius=1),
+    )
+
+
+def _lunge_pill(frame, text: str, pos: tuple, bg_color: tuple,
+                font_scale: float = 0.44, thickness: int = 1):
+    """Filled rounded-rect label pill."""
+    import cv2
+    x, y = pos
+    font = cv2.FONT_HERSHEY_DUPLEX
+    (tw, th), bl = cv2.getTextSize(text, font, font_scale, thickness)
+    pad = 6
+    cv2.rectangle(frame,
+                  (x - pad, y - th - pad),
+                  (x + tw + pad, y + bl + pad),
+                  bg_color, -1)
+    cv2.rectangle(frame,
+                  (x - pad, y - th - pad),
+                  (x + tw + pad, y + bl + pad),
+                  _L_BLACK, 1)
+    cv2.putText(frame, text, (x, y), font, font_scale,
+                _L_BLACK, thickness, cv2.LINE_AA)
+
+
+def _lunge_error_banner(frame, text: str, idx: int, w: int, h: int):
+    """Semi-transparent red strip at the bottom with warning text."""
+    import cv2
+    y = h - 36 - idx * 40
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, y - 26), (w, y + 12), (28, 28, 195), -1)
+    cv2.addWeighted(overlay, 0.78, frame, 0.22, 0, frame)
+    cv2.putText(frame, f"!  {text}", (14, y),
+                cv2.FONT_HERSHEY_DUPLEX, 0.47, _L_WHITE, 1, cv2.LINE_AA)
+
+
+def _lunge_draw_knee_angles(frame, landmarks, mp_pose,
+                             right_angle: float, left_angle: float,
+                             right_err: bool, left_err: bool,
+                             video_dims: tuple):
+    """Knee angle value rendered beside each knee joint."""
+    import cv2
+    w, h = video_dims
+    rk = landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value]
+    lk = landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value]
+
+    r_px = (int(rk.x * w) + 14, int(rk.y * h))
+    l_px = (int(lk.x * w) + 14, int(lk.y * h))
+
+    cv2.putText(frame, f"{int(right_angle)}", r_px,
+                cv2.FONT_HERSHEY_SIMPLEX, 0.58,
+                _L_RED if right_err else _L_GREEN, 2, cv2.LINE_AA)
+    cv2.putText(frame, f"{int(left_angle)}", l_px,
+                cv2.FONT_HERSHEY_SIMPLEX, 0.58,
+                _L_RED if left_err else _L_GREEN, 2, cv2.LINE_AA)
+
+
+def _lunge_hud(frame, counter: int, current_stage: str,
+               score_pct: int,
+               knee_over_toe_error: bool, knee_angle_error: bool,
+               rep_flash_frames: int):
+    """
+    Full HUD overlay:
+      - Dark top bar with REPS / STAGE / SCORE pills
+      - Error banners at bottom
+      - Orange flash + "REP!" text for ~12 frames after each new rep
+    """
+    import cv2
+    h, w = frame.shape[:2]
+
+    # Semi-transparent top bar
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, 70), _L_BLACK, -1)
+    cv2.addWeighted(overlay, 0.72, frame, 0.28, 0, frame)
+
+    # Exercise watermark (top-left, muted)
+    cv2.putText(frame, "LUNGE", (14, 22),
+                cv2.FONT_HERSHEY_DUPLEX, 0.52, _L_ORANGE, 1, cv2.LINE_AA)
+
+    # REPS pill
+    _lunge_pill(frame, f"REPS  {counter}", (14, 56), _L_GREEN)
+
+    # STAGE pill
+    stage_text, stage_color = _STAGE_DISPLAY.get(current_stage, ("---", _L_WHITE))
+    _lunge_pill(frame, f"STAGE  {stage_text}", (115, 56), stage_color)
+
+    # SCORE pill
+    score_color = _L_GREEN if score_pct >= 80 else _L_YELLOW if score_pct >= 50 else _L_RED
+    _lunge_pill(frame, f"SCORE  {score_pct}%", (330, 56), score_color)
+
+    # Error banners (bottom)
+    banner_idx = 0
+    if knee_over_toe_error:
+        _lunge_error_banner(frame,
+                            "KNEE OVER TOE — STEP FURTHER FORWARD",
+                            banner_idx, w, h)
+        banner_idx += 1
+    if knee_angle_error:
+        _lunge_error_banner(frame,
+                            "KNEE ANGLE OUT OF RANGE  [60 - 125 deg]",
+                            banner_idx, w, h)
+
+    # Rep-completion flash — fades over 12 frames
+    if rep_flash_frames > 0:
+        alpha = (rep_flash_frames / 12.0) * 0.38
+        flash = frame.copy()
+        cv2.rectangle(flash, (0, 0), (w, h), _L_WHITE, -1)
+        cv2.addWeighted(flash, alpha, frame, 1 - alpha, 0, frame)
+
+        # "REP!" text centred on screen
+        font = cv2.FONT_HERSHEY_DUPLEX
+        label = "REP!"
+        (tw, th), _ = cv2.getTextSize(label, font, 2.6, 3)
+        cv2.putText(frame, label,
+                    ((w - tw) // 2, (h + th) // 2),
+                    font, 2.6, _L_ORANGE, 3, cv2.LINE_AA)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1353,37 +1472,21 @@ def _predict_lunge_gcn(raw_row: dict, gcn_model: _LungeGCN,
 
 class LungeDetector(ExerciseDetector):
     """
-    Lunge exercise detector.
+    Lunge exercise detector with annotated video output.
 
     Stage detection  : _LungeGCN (n_classes=3)  → I / M / D
-                       lunge_stage_gcn.pth  +  lunge_stage_gcn_scaler.pkl
-
     Error detection  : _LungeGCN (n_classes=2)  → C / L  (knee-over-toe)
-                       lunge_err_gcn.pth    +  lunge_err_gcn_scaler.pkl
-                       runs only at the DOWN stage (same as original lunge.py)
-
-    Knee angle check : geometric rule on raw landmarks, also only at DOWN stage.
-                       Thresholds: [60°, 125°]  (same as original lunge.py)
-
-    Rep counting     : I → M → D transition completes one rep
-                       (current_stage must be "init" or "mid" before hitting "down")
-
-    Scoring          : 10 pts per clean rep, 5 pts if only knee-angle error,
-                       0 pts if knee-over-toe (ML) error is active at rep completion.
+    Knee angle check : geometric [60°, 125°], only at DOWN, skipped if KOT active
+    Rep counting     : I → M → D = +1 rep
+    Annotations      : skeleton (green/red), HUD pills, knee angles,
+                       error banners, rep flash
     """
 
-    PREDICTION_PROB_THRESHOLD = 0.80   # same as original lunge.py
+    PREDICTION_PROB_THRESHOLD = 0.80
     KNEE_ANGLE_THRESHOLD      = [60, 125]
 
-    # Stage label mapping — LabelEncoder sorts alphabetically:
-    #   D → 0,  I → 1,  M → 2
-    _STAGE_IDX = {"D": 0, "I": 1, "M": 2}
     _STAGE_LABEL = {0: "D", 1: "I", 2: "M"}
-
-    # Error label mapping — LabelEncoder sorts alphabetically:
-    #   C → 0,  L → 1
-    _ERR_IDX   = {"C": 0, "L": 1}
-    _ERR_LABEL = {0: "C", 1: "L"}
+    _ERR_LABEL   = {0: "C", 1: "L"}
 
     def process_video(self, video_path: str,
                       output_path: Optional[str] = None) -> Dict[str, Any]:
@@ -1391,24 +1494,18 @@ class LungeDetector(ExerciseDetector):
         import mediapipe as mp
         import time
         import pickle
+        import uuid
+        from pathlib import Path as _Path
 
-        # ── Load stage GCN ────────────────────────────────────────────────
+        # ── Load models ───────────────────────────────────────────────────
         stage_weights = parent_dir / "lunge_stage_gcn.pth"
         stage_scaler  = parent_dir / "lunge_stage_gcn_scaler.pkl"
-        if not stage_weights.exists() or not stage_scaler.exists():
-            raise FileNotFoundError(
-                f"Lunge stage GCN files not found in {parent_dir}. "
-                "Expected: lunge_stage_gcn.pth  and  lunge_stage_gcn_scaler.pkl"
-            )
+        err_weights   = parent_dir / "lunge_err_gcn.pth"
+        err_scaler    = parent_dir / "lunge_err_gcn_scaler.pkl"
 
-        # ── Load error GCN ────────────────────────────────────────────────
-        err_weights = parent_dir / "lunge_err_gcn.pth"
-        err_scaler  = parent_dir / "lunge_err_gcn_scaler.pkl"
-        if not err_weights.exists() or not err_scaler.exists():
-            raise FileNotFoundError(
-                f"Lunge error GCN files not found in {parent_dir}. "
-                "Expected: lunge_err_gcn.pth  and  lunge_err_gcn_scaler.pkl"
-            )
+        for p in (stage_weights, stage_scaler, err_weights, err_scaler):
+            if not p.exists():
+                raise FileNotFoundError(f"Lunge model file not found: {p}")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -1420,28 +1517,45 @@ class LungeDetector(ExerciseDetector):
         err_model.load_state_dict(torch.load(err_weights, map_location=device))
         err_model.eval()
 
-        with open(stage_scaler, "rb") as f:
-            sc_stage = pickle.load(f)
-        with open(err_scaler, "rb") as f:
-            sc_err = pickle.load(f)
+        with open(stage_scaler, "rb") as f: sc_stage = pickle.load(f)
+        with open(err_scaler,   "rb") as f: sc_err   = pickle.load(f)
 
         mp_pose = mp.solutions.pose
 
-        # ── Session state ─────────────────────────────────────────────────
-        current_stage  = ""   # "init" | "mid" | "down"
-        counter        = 0
-
-        # Error tracking
-        knee_over_toe_errors = 0
-        knee_angle_errors    = 0
-
-        # Scoring
-        score_total = 0
-        prev_counter = 0
-
+        # ── Open input video ──────────────────────────────────────────────
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"Could not open video: {video_path}")
+
+        fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # ── Output video path ─────────────────────────────────────────────
+        # Save to the same uploads/videos directory as the original
+        in_path = _Path(video_path)
+        if output_path:
+            processed_path = output_path
+        else:
+            processed_path = str(
+                in_path.parent / f"lunge_annotated_{uuid.uuid4().hex[:8]}.mp4"
+            )
+
+        fourcc = cv2.VideoWriter_fourcc(*"avc1")
+        writer = cv2.VideoWriter(processed_path, fourcc, fps, (width, height))
+        if not writer.isOpened():
+            # Fallback codec for systems without H.264
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(processed_path, fourcc, fps, (width, height))
+
+        # ── Session state ─────────────────────────────────────────────────
+        current_stage        = ""
+        counter              = 0
+        knee_over_toe_errors = 0
+        knee_angle_errors    = 0
+        score_total          = 0
+        prev_counter         = 0
+        rep_flash_frames     = 0
 
         start_time = time.time()
 
@@ -1455,14 +1569,20 @@ class LungeDetector(ExerciseDetector):
                 if not ret:
                     break
 
+                # Decrement flash counter each frame regardless of pose
+                if rep_flash_frames > 0:
+                    rep_flash_frames -= 1
+
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 res = pose.process(rgb)
+
                 if not res.pose_landmarks:
+                    writer.write(frame)
                     continue
 
                 landmarks = res.pose_landmarks.landmark
 
-                # ── Build raw landmark dict ───────────────────────────────
+                # ── Build landmark dict ───────────────────────────────────
                 raw_row = {}
                 for lm_name, lm_key in zip(_LUNGE_LM_NAMES, _LUNGE_LANDMARKS):
                     lm_obj = landmarks[mp_pose.PoseLandmark[lm_name].value]
@@ -1471,101 +1591,118 @@ class LungeDetector(ExerciseDetector):
                     raw_row[f"{lm_key}_z"] = lm_obj.z
                     raw_row[f"{lm_key}_v"] = lm_obj.visibility
 
-                # ── Stage GCN prediction ──────────────────────────────────
-                stage_idx, stage_probs, stage_conf = _predict_lunge_gcn(
+                # ── Stage GCN ─────────────────────────────────────────────
+                stage_idx, _, stage_conf = _predict_lunge_gcn(
                     raw_row, stage_model, sc_stage, device
                 )
                 stage_label = self._STAGE_LABEL[stage_idx]
 
-                # Update stage only when confidence clears the threshold
-                # — same probability-gating as original lunge.py
                 if stage_conf >= self.PREDICTION_PROB_THRESHOLD:
                     if stage_label == "I":
                         current_stage = "init"
                     elif stage_label == "M":
                         current_stage = "mid"
                     elif stage_label == "D":
-                        # Rep completes the moment we hit DOWN from init or mid
                         if current_stage in ("init", "mid"):
                             counter += 1
+                            rep_flash_frames = 12
                         current_stage = "down"
 
-                # ── Error GCN + knee-angle check (DOWN stage only) ────────
-                # Mirrors original lunge.py: both checks only at "down"
+                # ── Error GCN + geometric knee check (DOWN only) ──────────
                 knee_over_toe_error = False
                 knee_angle_error    = False
+                right_angle = left_angle = 0.0
+                right_angle_error = left_angle_error = False
 
                 if current_stage == "down":
-
-                    # ML error check (knee-over-toe)
-                    err_idx, err_probs, err_conf = _predict_lunge_gcn(
+                    err_idx, _, err_conf = _predict_lunge_gcn(
                         raw_row, err_model, sc_err, device
                     )
                     err_label = self._ERR_LABEL[err_idx]
 
-                    if (err_label == "L" and
-                            err_conf >= self.PREDICTION_PROB_THRESHOLD):
+                    if err_label == "L" and err_conf >= self.PREDICTION_PROB_THRESHOLD:
                         knee_over_toe_error = True
-
-                    elif (err_label == "C" and
-                            err_conf >= self.PREDICTION_PROB_THRESHOLD):
+                    elif err_label == "C" and err_conf >= self.PREDICTION_PROB_THRESHOLD:
                         knee_over_toe_error = False
 
-                    # Geometric knee-angle check
-                    # Only evaluated when knee-over-toe is NOT active —
-                    # matches original lunge.py analyze_knee_angle logic
                     if not knee_over_toe_error:
-                        right_hip   = [landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x,
-                                       landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y]
-                        right_knee  = [landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].x,
-                                       landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y]
-                        right_ankle = [landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,
-                                       landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y]
+                        rh = [landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x,
+                              landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y]
+                        rk = [landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].x,
+                              landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y]
+                        ra = [landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,
+                              landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y]
+                        lh = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
+                              landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+                        lk = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
+                              landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+                        la = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
+                              landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
 
-                        left_hip    = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
-                                       landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-                        left_knee   = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
-                                       landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-                        left_ankle  = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
-                                       landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
-
-                        right_angle = _calculate_angle(right_hip, right_knee, right_ankle)
-                        left_angle  = _calculate_angle(left_hip,  left_knee,  left_ankle)
+                        right_angle = _calculate_angle(rh, rk, ra)
+                        left_angle  = _calculate_angle(lh, lk, la)
 
                         lo, hi = self.KNEE_ANGLE_THRESHOLD
                         right_angle_error = not (lo <= right_angle <= hi)
                         left_angle_error  = not (lo <= left_angle  <= hi)
                         knee_angle_error  = right_angle_error or left_angle_error
 
-                # ── Scoring on rep completion ─────────────────────────────
-                # Evaluate at the moment the counter increments (same delta
-                # pattern used in BicepCurlDetector)
+                # ── Scoring ───────────────────────────────────────────────
                 if counter > prev_counter:
                     if knee_over_toe_error:
-                        # Bad rep — no points (mirrors original: 0 score for KOT error)
                         pass
                     elif knee_angle_error:
-                        score_total += 5    # partial credit
+                        score_total += 5
                         knee_angle_errors += 1
                     else:
-                        score_total += 10   # clean rep
+                        score_total += 10
                     prev_counter = counter
 
-                # Track cumulative error counts
                 if knee_over_toe_error:
                     knee_over_toe_errors += 1
 
+                # Running score percentage for HUD
+                max_so_far = counter * 10 if counter > 0 else 10
+                score_pct  = int((score_total / max_so_far) * 100)
+
+                has_error  = knee_over_toe_error or knee_angle_error
+
+                # ── Draw annotations ──────────────────────────────────────
+
+                # 1. Skeleton (green = clean, red = error)
+                _lunge_draw_skeleton(frame, res, has_error)
+
+                # 2. Knee angle numbers at joint (only at DOWN, no KOT error)
+                if current_stage == "down" and not knee_over_toe_error:
+                    _lunge_draw_knee_angles(
+                        frame, landmarks, mp_pose,
+                        right_angle, left_angle,
+                        right_angle_error, left_angle_error,
+                        (width, height)
+                    )
+
+                # 3. HUD: top bar pills + error banners + rep flash
+                _lunge_hud(
+                    frame, counter, current_stage, score_pct,
+                    knee_over_toe_error, knee_angle_error,
+                    rep_flash_frames
+                )
+
+                writer.write(frame)
+
         cap.release()
+        writer.release()
         duration = time.time() - start_time
 
-        max_score   = counter * 10 if counter > 0 else 10
-        score_pct   = int((score_total / max_score) * 100) if max_score > 0 else 0
+        max_score    = counter * 10 if counter > 0 else 10
+        score_pct    = int((score_total / max_score) * 100) if max_score > 0 else 0
         total_errors = knee_over_toe_errors + knee_angle_errors
 
         return {
             "score"           : score_pct,
             "duration_seconds": duration,
             "error_count"     : total_errors,
+            "processed_video" : _Path(processed_path).name,
             "details": {
                 "total_reps"          : counter,
                 "knee_over_toe_errors": knee_over_toe_errors,
@@ -1575,7 +1712,7 @@ class LungeDetector(ExerciseDetector):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Registry
+# Registry — add lunge here
 # ─────────────────────────────────────────────────────────────────────────────
 
 EXERCISE_DETECTORS: Dict[str, ExerciseDetector] = {
@@ -1584,7 +1721,10 @@ EXERCISE_DETECTORS: Dict[str, ExerciseDetector] = {
     "lunge"     : LungeDetector(),
 }
 
+
 def get_detector(exercise_name: str) -> ExerciseDetector:
     if exercise_name not in EXERCISE_DETECTORS:
         raise ValueError(f"No detector found for exercise: {exercise_name}")
     return EXERCISE_DETECTORS[exercise_name]
+
+
