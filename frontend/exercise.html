@@ -5,6 +5,259 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Exercises — RepTrack</title>
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* ── Tab switcher ──────────────────────────────────────────────── */
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1.5px solid #e0e0e0;
+      width: fit-content;
+      margin-bottom: 24px;
+    }
+    .mode-tab {
+      padding: 10px 28px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      background: #f5f5f5;
+      color: #777;
+      transition: background 0.18s, color 0.18s;
+      letter-spacing: 0.03em;
+    }
+    .mode-tab:first-child { border-right: 1.5px solid #e0e0e0; }
+    .mode-tab.active {
+      background: #667eea;
+      color: #fff;
+    }
+    .mode-tab:hover:not(.active) { background: #ececec; color: #444; }
+
+    /* ── Live panel ────────────────────────────────────────────────── */
+    .live-panel { max-width: 700px; }
+
+    .webcam-wrapper {
+      position: relative;
+      width: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #111;
+      aspect-ratio: 4/3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+    .webcam-wrapper canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    /* Placeholder before camera starts */
+    .webcam-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #555;
+      gap: 12px;
+      font-size: 14px;
+    }
+    .webcam-placeholder svg { opacity: 0.4; }
+
+    /* Recording dot */
+    .rec-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0,0,0,0.6);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.08em;
+      display: none;
+    }
+    .rec-badge.visible { display: flex; }
+    .rec-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #e33;
+      animation: blink 1s infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    /* ── Live stats bar ────────────────────────────────────────────── */
+    .live-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .live-stat {
+      background: #f9f9f9;
+      border-radius: 8px;
+      padding: 12px 14px;
+      text-align: center;
+      border: 1.5px solid #ececec;
+    }
+    .live-stat-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #999;
+      margin-bottom: 4px;
+    }
+    .live-stat-value {
+      font-size: 24px;
+      font-weight: 800;
+      color: #333;
+      line-height: 1;
+    }
+    .live-stat-value.good  { color: #22c55e; }
+    .live-stat-value.warn  { color: #f59e0b; }
+    .live-stat-value.bad   { color: #ef4444; }
+
+    /* ── Error alerts ──────────────────────────────────────────────── */
+    .live-alerts {
+      min-height: 38px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .live-alert {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff1f1;
+      border: 1.5px solid #fca5a5;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #dc2626;
+      animation: slideIn 0.2s ease;
+    }
+    @keyframes slideIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+
+    /* ── Controls ──────────────────────────────────────────────────── */
+    .live-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn-live-start {
+      background: #22c55e;
+      color: #fff;
+      border: none;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.18s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-live-start:hover { background: #16a34a; transform: translateY(-1px); }
+    .btn-live-stop {
+      background: #ef4444;
+      color: #fff;
+      border: none;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.18s;
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-live-stop:hover { background: #dc2626; }
+    .btn-live-stop.visible { display: flex; }
+    .btn-live-start.hidden-btn { display: none; }
+
+    /* ── Summary card (shows after stopping) ──────────────────────── */
+    .live-summary {
+      margin-top: 20px;
+      background: #f0fdf4;
+      border: 1.5px solid #86efac;
+      border-radius: 12px;
+      padding: 20px 24px;
+      display: none;
+    }
+    .live-summary.visible { display: block; }
+    .live-summary h3 {
+      color: #15803d;
+      margin-bottom: 14px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      gap: 10px;
+    }
+    .summary-metric {
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+      border: 1px solid #bbf7d0;
+    }
+    .summary-metric-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #86efac;
+      margin-bottom: 4px;
+    }
+    .summary-metric-value {
+      font-size: 22px;
+      font-weight: 800;
+      color: #15803d;
+    }
+
+    /* ── Exercise select shared ────────────────────────────────────── */
+    .live-exercise-select {
+      margin-bottom: 14px;
+    }
+
+    /* ── Reuse card styles from existing UI ───────────────────────── */
+    .hidden { display: none !important; }
+
+    /* Processing box style (matches existing) */
+    .processing-box {
+      background: #f9f9f9;
+      border-radius: 12px;
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .processing-box h3 { margin-bottom: 14px; color: #555; }
+
+    /* Alert styles */
+    .alert { padding: 12px 16px; border-radius: 8px; font-size: 14px; }
+    .alert-success { background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; }
+    .alert-error   { background:#fee2e2; color:#7f1d1d; border:1px solid #fca5a5; }
+    .mt-16 { margin-top:16px; }
+    .flex { display:flex; }
+    .gap-8 { gap:8px; }
+    .flex-wrap { flex-wrap:wrap; }
+    .mb-16 { margin-bottom:16px; }
+  </style>
 </head>
 <body>
 
@@ -29,90 +282,217 @@
 <div class="page">
   <div class="page-header fade-up">
     <div>
-      <div class="page-title">Upload Exercise</div>
-      <div class="page-subtitle">Submit a video to get your form score</div>
+      <div class="page-title">Exercise Session</div>
+      <div class="page-subtitle">Upload a video or use your webcam for live detection</div>
     </div>
   </div>
 
-  <!-- FORM CARD -->
-  <div class="card fade-up fade-up-1 mb-16" style="max-width:560px">
-    <div class="card-title">Session Setup</div>
+  <!-- MODE TABS -->
+  <div class="mode-tabs fade-up fade-up-1">
+    <button class="mode-tab active" id="tab-upload" onclick="switchTab('upload')">📁 Upload Video</button>
+    <button class="mode-tab"        id="tab-live"   onclick="switchTab('live')">📷 Live Webcam</button>
+  </div>
 
-    <div class="form-group">
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!--  UPLOAD TAB                                                    -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div id="panel-upload">
+
+    <div class="card fade-up fade-up-1 mb-16" style="max-width:560px">
+      <div class="card-title">Session Setup</div>
+
+      <div class="form-group">
+        <label class="form-label">Exercise Type</label>
+        <select id="upload-exercise-select">
+          <option value="">Loading exercises...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Video File</label>
+        <input type="file" id="video-input" accept="video/*">
+      </div>
+
+      <button id="upload-btn" class="btn btn-primary" onclick="uploadVideo()" disabled style="width:100%">
+        Upload &amp; Analyse →
+      </button>
+    </div>
+
+    <!-- Processing -->
+    <div id="processing-section" class="hidden" style="max-width:560px">
+      <div class="processing-box fade-up">
+        <h3>Analysing your video…</h3>
+        <div class="progress-bar">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <p class="text-muted" style="margin-top:8px;font-size:13px">
+          MediaPipe is extracting pose landmarks — this may take a moment
+        </p>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results-section" class="hidden" style="max-width:560px">
+      <div class="result-card fade-up">
+        <h3>Session Complete</h3>
+        <div class="result-grid" id="results-grid"></div>
+        <div id="results-actions" class="flex gap-8 flex-wrap"></div>
+      </div>
+      <div id="submit-feedback"></div>
+    </div>
+
+  </div><!-- /panel-upload -->
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!--  LIVE WEBCAM TAB                                               -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div id="panel-live" class="live-panel hidden">
+
+    <!-- Exercise picker -->
+    <div class="live-exercise-select fade-up">
       <label class="form-label">Exercise Type</label>
-      <select id="exercise-select">
+      <select id="live-exercise-select" style="max-width:320px;padding:9px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;">
         <option value="">Loading exercises...</option>
       </select>
     </div>
 
-    <div class="form-group">
-      <label class="form-label">Video File</label>
-      <input type="file" id="video-input" accept="video/*">
-    </div>
-
-    <button id="upload-btn" class="btn btn-primary" onclick="uploadVideo()" disabled style="width:100%">
-      Upload &amp; Analyse →
-    </button>
-  </div>
-
-  <!-- PROCESSING -->
-  <div id="processing-section" class="hidden" style="max-width:560px">
-    <div class="processing-box fade-up">
-      <h3>Analysing your video…</h3>
-      <div class="progress-bar">
-        <div id="progress-fill" class="progress-fill"></div>
+    <!-- Live stats -->
+    <div class="live-stats fade-up fade-up-1" id="live-stats-bar" style="display:none">
+      <!-- Bicep stats -->
+      <div class="live-stat" id="stat-reps">
+        <div class="live-stat-label">Total Reps</div>
+        <div class="live-stat-value good" id="val-reps">0</div>
       </div>
-      <p class="text-muted" style="margin-top:8px;font-size:13px">MediaPipe is extracting pose landmarks — this may take a moment</p>
+      <div class="live-stat" id="stat-score">
+        <div class="live-stat-label">Form Score</div>
+        <div class="live-stat-value good" id="val-score">—</div>
+      </div>
+      <div class="live-stat" id="stat-errors">
+        <div class="live-stat-label">Errors</div>
+        <div class="live-stat-value" id="val-errors">0</div>
+      </div>
+      <div class="live-stat" id="stat-duration">
+        <div class="live-stat-label">Duration</div>
+        <div class="live-stat-value" id="val-duration">0s</div>
+      </div>
+      <!-- Plank-only stats (hidden for bicep) -->
+      <div class="live-stat hidden" id="stat-quality">
+        <div class="live-stat-label">Quality</div>
+        <div class="live-stat-value good" id="val-quality">100%</div>
+      </div>
     </div>
-  </div>
 
-  <!-- RESULTS -->
-  <div id="results-section" class="hidden" style="max-width:560px">
-    <div class="result-card fade-up">
-      <h3>Session Complete</h3>
-      <div class="result-grid" id="results-grid"></div>
-      <div id="results-actions" class="flex gap-8 flex-wrap"></div>
+    <!-- Error alerts area -->
+    <div class="live-alerts" id="live-alerts"></div>
+
+    <!-- Webcam canvas -->
+    <div class="webcam-wrapper">
+      <!-- Placeholder shown before camera starts -->
+      <div class="webcam-placeholder" id="webcam-placeholder">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M23 7l-7 5 7 5V7z"/>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+        </svg>
+        <span>Select an exercise and press Start</span>
+      </div>
+      <!-- Annotated frame rendered here -->
+      <canvas id="live-canvas" style="display:none"></canvas>
+      <!-- Hidden: raw webcam feed (used only for frame capture) -->
+      <video id="raw-webcam" autoplay playsinline muted style="display:none"></video>
+      <!-- Recording badge -->
+      <div class="rec-badge" id="rec-badge">
+        <div class="rec-dot"></div>
+        <span>LIVE</span>
+      </div>
     </div>
-    <div id="submit-feedback"></div>
-  </div>
 
-</div>
+    <!-- Controls -->
+    <div class="live-controls">
+      <button class="btn-live-start" id="btn-start" onclick="startLive()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Start Session
+      </button>
+      <button class="btn-live-stop" id="btn-stop" onclick="stopLive()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+        Stop Session
+      </button>
+    </div>
+
+    <!-- Summary shown after stopping -->
+    <div class="live-summary" id="live-summary">
+      <h3>✅ Session Summary</h3>
+      <div class="summary-grid" id="summary-grid"></div>
+      <p style="margin-top:14px;font-size:13px;color:#6b7280;">
+        Live sessions are stored in this browser tab only and won't affect your leaderboard score.
+      </p>
+    </div>
+
+  </div><!-- /panel-live -->
+
+</div><!-- /page -->
 
 <script src="js/auth.js"></script>
 <script src="js/api.js"></script>
 <script>
   checkAuth();
 
-  const urlParams         = new URLSearchParams(window.location.search);
-  const preselectedEx     = urlParams.get('exercise');
+  // ── URL param handling (for challenge pre-selection) ─────────────────────
+  const urlParams          = new URLSearchParams(window.location.search);
+  const preselectedEx      = urlParams.get('exercise');
   const pendingChallengeId = urlParams.get('challenge');
 
-  document.getElementById('exercise-select').addEventListener('change', updateBtn);
-  document.getElementById('video-input').addEventListener('change', updateBtn);
+  // ── Tab switching ────────────────────────────────────────────────────────
+  function switchTab(tab) {
+    document.getElementById('tab-upload').classList.toggle('active', tab === 'upload');
+    document.getElementById('tab-live').classList.toggle('active',   tab === 'live');
+    document.getElementById('panel-upload').classList.toggle('hidden', tab !== 'upload');
+    document.getElementById('panel-live').classList.toggle('hidden',   tab !== 'live');
+    // Stop live session if user leaves live tab
+    if (tab === 'upload' && isLive) stopLive();
+  }
 
-  function updateBtn() {
-    const ex    = document.getElementById('exercise-select').value;
+  // ── Shared exercise list ─────────────────────────────────────────────────
+  async function loadExercises() {
+    try {
+      const exercises = await listExercises();
+
+      // Upload tab select
+      const upSel = document.getElementById('upload-exercise-select');
+      upSel.innerHTML = '<option value="">Select an exercise…</option>';
+      exercises.forEach(ex => {
+        const opt = document.createElement('option');
+        opt.value = ex.id; opt.textContent = ex.display_name;
+        upSel.appendChild(opt);
+      });
+      if (preselectedEx) { upSel.value = preselectedEx; updateUploadBtn(); }
+
+      // Live tab select (only bicep_curl & plank supported)
+      const liveSel = document.getElementById('live-exercise-select');
+      liveSel.innerHTML = '<option value="">Select an exercise…</option>';
+      exercises
+        .filter(ex => ['bicep_curl', 'plank'].includes(ex.name))
+        .forEach(ex => {
+          const opt = document.createElement('option');
+          opt.value = ex.name; opt.textContent = ex.display_name;
+          liveSel.appendChild(opt);
+        });
+    } catch (e) { console.error('Error loading exercises:', e); }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  UPLOAD TAB logic
+  // ════════════════════════════════════════════════════════════════════════
+  document.getElementById('upload-exercise-select').addEventListener('change', updateUploadBtn);
+  document.getElementById('video-input').addEventListener('change', updateUploadBtn);
+
+  function updateUploadBtn() {
+    const ex    = document.getElementById('upload-exercise-select').value;
     const video = document.getElementById('video-input').files[0];
     document.getElementById('upload-btn').disabled = !ex || !video;
   }
 
-  async function loadExercises() {
-    try {
-      const exercises = await listExercises();
-      const sel = document.getElementById('exercise-select');
-      sel.innerHTML = '<option value="">Select an exercise…</option>';
-      exercises.forEach(ex => {
-        const opt = document.createElement('option');
-        opt.value = ex.id;
-        opt.textContent = ex.display_name;
-        sel.appendChild(opt);
-      });
-      if (preselectedEx) { sel.value = preselectedEx; updateBtn(); }
-    } catch (e) { console.error('Error loading exercises:', e); }
-  }
-
   async function uploadVideo() {
-    const exerciseId = parseInt(document.getElementById('exercise-select').value);
+    const exerciseId = parseInt(document.getElementById('upload-exercise-select').value);
     const videoFile  = document.getElementById('video-input').files[0];
     const userId     = parseInt(localStorage.getItem('userId'));
     if (!exerciseId || !videoFile || !userId) return;
@@ -131,7 +511,7 @@
       const session = await uploadExerciseVideo(userId, exerciseId, videoFile);
       clearInterval(interval);
       document.getElementById('progress-fill').style.width = '100%';
-      setTimeout(() => showResults(session), 400);
+      setTimeout(() => showUploadResults(session), 400);
     } catch (err) {
       clearInterval(interval);
       document.getElementById('processing-section').classList.add('hidden');
@@ -140,14 +520,11 @@
     }
   }
 
-  function showResults(session) {
+  function showUploadResults(session) {
     document.getElementById('processing-section').classList.add('hidden');
     document.getElementById('results-section').classList.remove('hidden');
-
     localStorage.setItem('lastSessionId', session.id);
-
     const scoreClass = session.score >= 80 ? 'accent' : session.score >= 50 ? 'yellow' : '';
-
     document.getElementById('results-grid').innerHTML = `
       <div class="result-metric">
         <div class="result-metric-label">Form Score</div>
@@ -161,14 +538,10 @@
         <div class="result-metric-label">Errors</div>
         <div class="result-metric-value">${session.error_count}</div>
       </div>`;
-
     document.getElementById('results-actions').innerHTML = `
       <a href="exercise.html" class="btn btn-outline">New Session</a>
       <a href="challenges.html" class="btn btn-ghost">Submit to Challenge</a>`;
-
-    if (pendingChallengeId) {
-      autoSubmit(parseInt(pendingChallengeId), session.id);
-    }
+    if (pendingChallengeId) autoSubmit(parseInt(pendingChallengeId), session.id);
   }
 
   async function autoSubmit(challengeId, sessionId) {
@@ -184,6 +557,266 @@
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  //  LIVE WEBCAM logic
+  // ════════════════════════════════════════════════════════════════════════
+
+  // Derive WebSocket base from the HTTP API base — keeps port in sync automatically.
+  // api.js sets API_BASE = 'http://127.0.0.1:8080/api', so we strip the http/https
+  // scheme and the trailing /api path to get the WS root.
+  const WS_BASE = API_BASE
+    .replace(/^http/, 'ws')   // http → ws  |  https → wss
+    .replace(/\/api$/, '');   // remove trailing /api
+
+  let ws            = null;
+  let isLive        = false;
+  let mediaStream   = null;
+  let captureLoop   = null;
+  let durationTimer = null;
+  let sessionSecs   = 0;
+  let lastStats     = null;    // final stats snapshot for summary
+
+  const canvas      = document.getElementById('live-canvas');
+  const ctx         = canvas.getContext('2d');
+  const rawVideo    = document.getElementById('raw-webcam');
+
+  async function startLive() {
+    const exerciseName = document.getElementById('live-exercise-select').value;
+    if (!exerciseName) {
+      alert('Please select an exercise first.');
+      return;
+    }
+
+    // Ask for webcam permission
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (e) {
+      alert('Could not access webcam: ' + e.message);
+      return;
+    }
+
+    rawVideo.srcObject = mediaStream;
+
+    // Wait until the browser has enough data to know real dimensions
+    // onloadedmetadata fires early (dimensions may be 0); oncanplay is reliable.
+    await new Promise(res => {
+      rawVideo.oncanplay = res;
+      rawVideo.play().catch(() => {});   // trigger decode pipeline
+    });
+
+    // Double-check we actually got dimensions (some browsers still report 0)
+    let w = rawVideo.videoWidth;
+    let h = rawVideo.videoHeight;
+    if (!w || !h) {
+      // Last resort: wait one animation frame for the browser to commit
+      await new Promise(res => requestAnimationFrame(res));
+      w = rawVideo.videoWidth  || 640;
+      h = rawVideo.videoHeight || 480;
+    }
+    canvas.width  = w;
+    canvas.height = h;
+
+    // Connect WebSocket
+    ws = new WebSocket(`${WS_BASE}/api/live/${exerciseName}`);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      isLive = true;
+      startCapture();
+      startDurationTimer();
+      updateLiveUI(true, exerciseName);
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.error) {
+        console.error('Live detection error:', msg.error);
+        stopLive();
+        alert('Backend error: ' + msg.error);
+        return;
+      }
+      // Render annotated frame — scale to fill display canvas
+      const img = new Image();
+      img.onload = () => {
+        // Ensure canvas still matches display size
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width  = img.naturalWidth  || canvas.width;
+          canvas.height = img.naturalHeight || canvas.height;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      };
+      img.src = 'data:image/jpeg;base64,' + msg.annotated_frame;
+
+      // Update stats HUD
+      if (msg.stats) {
+        lastStats = msg.stats;
+        updateStatsBar(msg.stats, exerciseName);
+      }
+    };
+
+    ws.onerror = (e) => {
+      console.error('WebSocket error:', e);
+    };
+
+    ws.onclose = () => {
+      if (isLive) stopLive();  // server closed unexpectedly
+    };
+  }
+
+  function startCapture() {
+    // Offscreen canvas for grabbing raw webcam frames — created once
+    const offscreen = document.createElement('canvas');
+    const octx      = offscreen.getContext('2d');
+
+    // requestAnimationFrame loop — only fires when browser has a new frame
+    let lastSendTime = 0;
+    const SEND_INTERVAL = 100; // ms → ~10 fps, comfortable for MediaPipe
+
+    function sendFrame(ts) {
+      if (!isLive) return;
+      requestAnimationFrame(sendFrame);
+
+      if (ts - lastSendTime < SEND_INTERVAL) return;
+      lastSendTime = ts;
+
+      if (ws?.readyState !== WebSocket.OPEN) return;
+
+      const w = rawVideo.videoWidth;
+      const h = rawVideo.videoHeight;
+      if (!w || !h) return; // guard: no frame data yet
+
+      offscreen.width  = w;
+      offscreen.height = h;
+      octx.drawImage(rawVideo, 0, 0, w, h);
+
+      offscreen.toBlob(blob => {
+        if (!blob || ws?.readyState !== WebSocket.OPEN) return;
+        blob.arrayBuffer().then(buf => {
+          if (ws?.readyState === WebSocket.OPEN) ws.send(buf);
+        });
+      }, 'image/jpeg', 0.80);
+    }
+
+    requestAnimationFrame(sendFrame);
+  }
+
+  function startDurationTimer() {
+    sessionSecs = 0;
+    durationTimer = setInterval(() => {
+      sessionSecs++;
+      document.getElementById('val-duration').textContent = sessionSecs + 's';
+    }, 1000);
+  }
+
+  function stopLive() {
+    isLive = false;  // rAF capture loop checks this and self-terminates
+
+    clearInterval(durationTimer);
+    durationTimer = null;
+    captureLoop   = null;  // no longer used (rAF loop stops via isLive flag)
+
+    if (ws) { ws.close(); ws = null; }
+
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+
+    const exerciseName = document.getElementById('live-exercise-select').value;
+    updateLiveUI(false, exerciseName);
+    showSummary(exerciseName);
+  }
+
+  function updateLiveUI(running, exerciseName) {
+    document.getElementById('webcam-placeholder').style.display = running ? 'none' : 'flex';
+    canvas.style.display = running ? 'block' : 'none';
+    document.getElementById('rec-badge').classList.toggle('visible', running);
+    document.getElementById('btn-start').classList.toggle('hidden-btn', running);
+    document.getElementById('btn-stop').classList.toggle('visible',    running);
+    document.getElementById('live-stats-bar').style.display = running ? 'grid' : 'none';
+    document.getElementById('live-summary').classList.remove('visible');
+
+    // Show/hide plank-only stats
+    const isPlank = exerciseName === 'plank';
+    document.getElementById('stat-reps').classList.toggle('hidden',    isPlank);
+    document.getElementById('stat-errors').classList.toggle('hidden',  isPlank);
+    document.getElementById('stat-quality').classList.toggle('hidden', !isPlank);
+  }
+
+  function updateStatsBar(stats, exerciseName) {
+    if (exerciseName === 'bicep_curl') {
+      const reps  = stats.total_reps ?? 0;
+      const score = stats.score ?? 0;
+      const errs  = stats.total_errors ?? 0;
+
+      document.getElementById('val-reps').textContent   = reps;
+      document.getElementById('val-score').textContent  = score;
+      document.getElementById('val-errors').textContent = errs;
+
+      const scoreEl = document.getElementById('val-score');
+      scoreEl.className = 'live-stat-value ' + (score >= 80 ? 'good' : score >= 50 ? 'warn' : 'bad');
+
+      // Error alerts
+      const alertsEl = document.getElementById('live-alerts');
+      alertsEl.innerHTML = '';
+      if (stats.lean_back) {
+        alertsEl.innerHTML += alertHTML('⚠️ Lean back detected — keep your torso upright');
+      }
+      (stats.active_errors || []).forEach(err => {
+        alertsEl.innerHTML += alertHTML('⚠️ ' + err);
+      });
+
+    } else if (exerciseName === 'plank') {
+      const quality = stats.score ?? 100;
+      const qualEl  = document.getElementById('val-quality');
+      qualEl.textContent  = quality + '%';
+      qualEl.className    = 'live-stat-value ' + (quality >= 80 ? 'good' : quality >= 50 ? 'warn' : 'bad');
+
+      const alertsEl = document.getElementById('live-alerts');
+      alertsEl.innerHTML = stats.current_error
+        ? alertHTML('⚠️ ' + stats.current_error)
+        : '';
+    }
+
+    document.getElementById('val-duration').textContent = Math.round(stats.duration ?? sessionSecs) + 's';
+  }
+
+  function alertHTML(msg) {
+    return `<div class="live-alert">${msg}</div>`;
+  }
+
+  function showSummary(exerciseName) {
+    if (!lastStats) return;
+    const summaryEl = document.getElementById('live-summary');
+    const gridEl    = document.getElementById('summary-grid');
+    summaryEl.classList.add('visible');
+
+    if (exerciseName === 'bicep_curl') {
+      gridEl.innerHTML = `
+        ${summaryMetric('Total Reps',  lastStats.total_reps  ?? 0)}
+        ${summaryMetric('Left Reps',   lastStats.left_reps   ?? 0)}
+        ${summaryMetric('Right Reps',  lastStats.right_reps  ?? 0)}
+        ${summaryMetric('Form Score',  (lastStats.score ?? 0) + '%')}
+        ${summaryMetric('Errors',      lastStats.total_errors ?? 0)}
+        ${summaryMetric('Duration',    Math.round(lastStats.duration ?? sessionSecs) + 's')}`;
+    } else {
+      gridEl.innerHTML = `
+        ${summaryMetric('Duration',     Math.round(lastStats.duration ?? sessionSecs) + 's')}
+        ${summaryMetric('Quality',      (lastStats.score ?? 100) + '%')}
+        ${summaryMetric('Low Back',     lastStats.low_back  ?? 0)}
+        ${summaryMetric('High Back',    lastStats.high_back ?? 0)}
+        ${summaryMetric('Error Time',   (lastStats.error_pct ?? 0) + '% of hold')}`;
+    }
+  }
+
+  function summaryMetric(label, value) {
+    return `<div class="summary-metric">
+      <div class="summary-metric-label">${label}</div>
+      <div class="summary-metric-value">${value}</div>
+    </div>`;
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────────────
   loadExercises();
 </script>
 </body>

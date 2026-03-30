@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from app.services.live_detector import router as live_router
+
 
 from app.config import settings
 from app.api.routes import users, exercises, sessions, challenges
@@ -34,6 +36,10 @@ app.include_router(users.router, prefix="/api")
 app.include_router(exercises.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(challenges.router, prefix="/api")
+app.include_router(live_router)          # NOTE: no prefix= here — the WebSocket
+                                          # path /api/live/{exercise} is already
+                                          # baked into the router decorators
+
 
 @app.get("/")
 def root():
