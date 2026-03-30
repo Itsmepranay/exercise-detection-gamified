@@ -1711,6 +1711,471 @@ class LungeDetector(ExerciseDetector):
         }
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SquatDetector
+#
+# Stage detection : GCN  (squat_stage_gcn.pth + squat_stage_gcn_scaler.pkl)
+#                   3 classes — "down" | "middle" | "up"
+# Error detection : Geometric — foot/knee placement ratios (original logic)
+#                   Errors counted on TRANSITION only (not per-frame)
+#                   This matches the original squat.py previous_stage pattern.
+# Annotated video : Written to output_path when provided (HUD overlay)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Squat GCN constants ───────────────────────────────────────────────────────
+
+_SQUAT_LANDMARKS = [
+    "nose",
+    "left_shoulder",  "right_shoulder",
+    "left_hip",       "right_hip",
+    "left_knee",      "right_knee",
+    "left_ankle",     "right_ankle",
+]
+_SQUAT_N_NODES = len(_SQUAT_LANDMARKS)   # 9
+_SQUAT_N_FEATS = 4
+
+_SQUAT_SKELETON_EDGES = [
+    ("nose",          "left_shoulder"),
+    ("nose",          "right_shoulder"),
+    ("left_shoulder", "right_shoulder"),
+    ("left_shoulder", "left_hip"),
+    ("right_shoulder","right_hip"),
+    ("left_hip",      "right_hip"),
+    ("left_hip",      "left_knee"),
+    ("right_hip",     "right_knee"),
+    ("left_knee",     "left_ankle"),
+    ("right_knee",    "right_ankle"),
+    ("left_hip",      "right_knee"),
+    ("right_hip",     "left_knee"),
+    ("left_ankle",    "right_ankle"),
+]
+
+_squat_node_to_idx = {n: i for i, n in enumerate(_SQUAT_LANDMARKS)}
+_squat_src, _squat_dst = [], []
+for _u, _v in _SQUAT_SKELETON_EDGES:
+    _i, _j = _squat_node_to_idx[_u], _squat_node_to_idx[_v]
+    _squat_src += [_i, _j]
+    _squat_dst += [_j, _i]
+_SQUAT_EDGE_INDEX = torch.tensor([_squat_src, _squat_dst], dtype=torch.long)
+
+_SQUAT_FEATURE_COLS = [
+    f"{lm}_{c}" for lm in _SQUAT_LANDMARKS for c in ["x", "y", "z", "v"]
+]
+
+
+# ── Squat GCN model ───────────────────────────────────────────────────────────
+
+class _SquatGCN(nn.Module):
+    def __init__(self, in_feats=4, hidden=64, out_feats=32, n_classes=3, dropout=0.4):
+        super().__init__()
+        self.out_feats = out_feats
+        self.conv1 = GCNConv(in_feats, hidden)
+        self.conv2 = GCNConv(hidden,   hidden)
+        self.conv3 = GCNConv(hidden,   out_feats)
+        self.bn1 = nn.BatchNorm1d(hidden)
+        self.bn2 = nn.BatchNorm1d(hidden)
+        self.bn3 = nn.BatchNorm1d(out_feats)
+        self.head = nn.Sequential(
+            nn.Linear(_SQUAT_N_NODES * out_feats, 128), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(128, 64),                          nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(64, n_classes),
+        )
+        self.dropout = dropout
+
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        x = F.relu(self.bn1(self.conv1(x, edge_index)))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = F.relu(self.bn2(self.conv2(x, edge_index)))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = F.relu(self.bn3(self.conv3(x, edge_index)))
+        x = x.view(batch.max().item() + 1, _SQUAT_N_NODES * self.out_feats)
+        return self.head(x)
+
+
+# ── Normalisation ─────────────────────────────────────────────────────────────
+
+def _normalize_squat_pose_row(row: dict) -> dict:
+    cx = (row["left_shoulder_x"] + row["right_shoulder_x"] +
+          row["left_hip_x"]      + row["right_hip_x"]) / 4
+    cy = (row["left_shoulder_y"] + row["right_shoulder_y"] +
+          row["left_hip_y"]      + row["right_hip_y"]) / 4
+    sh_mx = (row["left_shoulder_x"] + row["right_shoulder_x"]) / 2
+    sh_my = (row["left_shoulder_y"] + row["right_shoulder_y"]) / 2
+    hi_mx = (row["left_hip_x"]      + row["right_hip_x"])      / 2
+    hi_my = (row["left_hip_y"]      + row["right_hip_y"])      / 2
+    torso = ((sh_mx - hi_mx) ** 2 + (sh_my - hi_my) ** 2) ** 0.5 + 1e-6
+    out = dict(row)
+    for lm in _SQUAT_LANDMARKS:
+        out[f"{lm}_x"] = (row[f"{lm}_x"] - cx) / torso
+        out[f"{lm}_y"] = (row[f"{lm}_y"] - cy) / torso
+        out[f"{lm}_z"] =  row[f"{lm}_z"]        / torso
+    return out
+
+
+# ── GCN stage predictor ───────────────────────────────────────────────────────
+
+def _predict_squat_stage_gcn(raw_row, gcn_model, scaler, label_encoder,
+                              device, threshold=0.6):
+    norm        = _normalize_squat_pose_row(raw_row)
+    feat_vec    = [[norm[col] for col in _SQUAT_FEATURE_COLS]]
+    feat_scaled = scaler.transform(feat_vec)
+    x_node      = torch.tensor(feat_scaled[0].reshape(_SQUAT_N_NODES, _SQUAT_N_FEATS), dtype=torch.float)
+    data        = Data(x=x_node, edge_index=_SQUAT_EDGE_INDEX)
+    data.batch  = torch.zeros(_SQUAT_N_NODES, dtype=torch.long)
+    data        = data.to(device)
+    with torch.no_grad():
+        logits = gcn_model(data)
+        probs  = F.softmax(logits, dim=1)[0]
+    pred_idx   = probs.argmax().item()
+    confidence = probs[pred_idx].item()
+    if confidence < threshold:
+        return "unknown", confidence
+    return label_encoder.inverse_transform([pred_idx])[0], confidence
+
+
+# ── Geometric error analysis — exact original logic ───────────────────────────
+
+def _analyze_squat_foot_knee_placement(landmarks, stage,
+                                        foot_shoulder_ratio_thresholds,
+                                        knee_foot_ratio_thresholds,
+                                        visibility_threshold):
+    """
+    Returns {"foot_placement": code, "knee_placement": code}
+    Codes: -1=unknown, 0=correct, 1=too tight, 2=too wide
+    Exact port of original squat.py analyze_foot_knee_placement().
+    """
+    import math
+    import mediapipe as mp
+    mp_pose = mp.solutions.pose
+
+    result = {"foot_placement": -1, "knee_placement": -1}
+
+    def vis(lm):    return landmarks[mp_pose.PoseLandmark[lm].value].visibility
+    def xy(lm):
+        p = landmarks[mp_pose.PoseLandmark[lm].value]
+        return [p.x, p.y]
+    def dist(a, b): return math.sqrt((b[0]-a[0])**2 + (b[1]-a[1])**2)
+
+    if any(vis(lm) < visibility_threshold for lm in [
+        "LEFT_FOOT_INDEX", "RIGHT_FOOT_INDEX", "LEFT_KNEE", "RIGHT_KNEE",
+    ]):
+        return result
+
+    shoulder_width      = dist(xy("LEFT_SHOULDER"), xy("RIGHT_SHOULDER"))
+    foot_width          = dist(xy("LEFT_FOOT_INDEX"), xy("RIGHT_FOOT_INDEX"))
+    foot_shoulder_ratio = round(foot_width / shoulder_width, 1)
+    lo, hi = foot_shoulder_ratio_thresholds
+    if lo <= foot_shoulder_ratio <= hi:
+        result["foot_placement"] = 0
+    elif foot_shoulder_ratio < lo:
+        result["foot_placement"] = 1
+    else:
+        result["foot_placement"] = 2
+
+    # Knee only checked when feet are correct (same as original)
+    if result["foot_placement"] == 0:
+        knee_width      = dist(xy("LEFT_KNEE"), xy("RIGHT_KNEE"))
+        knee_foot_ratio = round(knee_width / foot_width, 1)
+        thresholds      = knee_foot_ratio_thresholds.get(stage)
+        if thresholds is not None:
+            lo_k, hi_k = thresholds
+            if lo_k <= knee_foot_ratio <= hi_k:
+                result["knee_placement"] = 0
+            elif knee_foot_ratio < lo_k:
+                result["knee_placement"] = 1
+            else:
+                result["knee_placement"] = 2
+
+    return result
+
+
+# ── HUD drawing helpers ───────────────────────────────────────────────────────
+
+_SQ_GREEN  = (0,   220, 100)
+_SQ_RED    = (30,   40, 220)
+_SQ_YELLOW = (0,   210, 255)
+_SQ_WHITE  = (255, 255, 255)
+_SQ_BLACK  = (0,     0,   0)
+_SQ_ORANGE = (30,  140, 255)
+
+
+def _sq_pill(frame, text, pos, bg_color):
+    import cv2
+    x, y = pos
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
+    cv2.rectangle(frame, (x-5, y-th-5), (x+tw+5, y+5), bg_color, -1)
+    cv2.rectangle(frame, (x-5, y-th-5), (x+tw+5, y+5), _SQ_BLACK, 1)
+    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.44, _SQ_BLACK, 1, cv2.LINE_AA)
+
+
+def _sq_error_banner(frame, text, idx, w, h):
+    import cv2
+    y = h - 44 - idx * 38
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, y-30), (w, y+10), (20, 20, 180), -1)
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+    cv2.putText(frame, f"!  {text}", (14, y), cv2.FONT_HERSHEY_DUPLEX, 0.52, _SQ_WHITE, 1, cv2.LINE_AA)
+
+
+def _sq_draw_hud(frame, stage, counter, score_pct, foot_label, knee_label, has_error):
+    import cv2
+    h, w = frame.shape[:2]
+
+    # Semi-transparent top bar
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, 72), (12, 12, 12), -1)
+    cv2.addWeighted(overlay, 0.72, frame, 0.28, 0, frame)
+
+    # Title
+    cv2.putText(frame, "SQUAT", (14, 22),
+                cv2.FONT_HERSHEY_DUPLEX, 0.6, _SQ_ORANGE, 1, cv2.LINE_AA)
+
+    # Stage pill
+    stage_col = (_SQ_GREEN if stage == "up"
+                 else _SQ_YELLOW if stage == "middle"
+                 else _SQ_RED if stage == "down"
+                 else (140, 140, 140))
+    _sq_pill(frame, f"STAGE  {stage.upper()}", (14, 52), stage_col)
+
+    # Reps pill
+    _sq_pill(frame, f"REPS  {counter}", (155, 52), _SQ_GREEN)
+
+    # Score pill
+    score_col = _SQ_GREEN if score_pct >= 80 else _SQ_YELLOW if score_pct >= 50 else _SQ_RED
+    _sq_pill(frame, f"SCORE  {score_pct}%", (255, 52), score_col)
+
+    # Error banners at bottom
+    banners = []
+    if foot_label in ("too tight", "too wide"):
+        banners.append(f"FOOT {foot_label.upper()}")
+    if knee_label in ("too tight", "too wide"):
+        banners.append(f"KNEE {knee_label.upper()}")
+    for i, b in enumerate(banners):
+        _sq_error_banner(frame, b, i, w, h)
+
+    # Red border when error is active
+    if has_error:
+        cv2.rectangle(frame, (0, 0), (w-1, h-1), _SQ_RED, 3)
+
+
+def _sq_draw_skeleton(frame, pose_landmarks, mp_drawing, mp_pose, has_error):
+    lm_col   = _SQ_RED    if has_error else _SQ_GREEN
+    conn_col = (60, 60, 200) if has_error else (180, 255, 180)
+    mp_drawing.draw_landmarks(
+        frame, pose_landmarks, mp_pose.POSE_CONNECTIONS,
+        mp_drawing.DrawingSpec(color=lm_col,  thickness=2, circle_radius=4),
+        mp_drawing.DrawingSpec(color=conn_col, thickness=2),
+    )
+
+
+# ── SquatDetector ─────────────────────────────────────────────────────────────
+
+class SquatDetector(ExerciseDetector):
+    """
+    Squat detector — RepTrack backend.
+
+    THE FIX FOR 190 ERRORS:
+    The previous version incremented total_foot_errors / total_knee_errors every
+    frame an error was detected.  At 30 fps this explodes to hundreds of counts.
+
+    The correct pattern (from original squat.py) uses a previous_stage dict:
+    an error is counted only when the label TRANSITIONS into an error state.
+    Consecutive frames with the same error do not increment the counter.
+    This is implemented via previous_foot / previous_knee string tracking below.
+    """
+
+    PREDICTION_PROB_THRESHOLD      = 0.6
+    VISIBILITY_THRESHOLD           = 0.6
+    FOOT_SHOULDER_RATIO_THRESHOLDS = [1.2, 2.8]
+    KNEE_FOOT_RATIO_THRESHOLDS     = {
+        "up":     [0.5, 1.0],
+        "middle": [0.7, 1.0],
+        "down":   [0.7, 1.1],
+    }
+
+    def process_video(self, video_path: str,
+                      output_path: Optional[str] = None) -> Dict[str, Any]:
+        import cv2
+        import mediapipe as mp
+        import time
+        import pickle
+
+        mp_pose    = mp.solutions.pose
+        mp_drawing = mp.solutions.drawing_utils
+
+        # ── Load GCN ─────────────────────────────────────────────────────────
+        gcn_weights = parent_dir / "squat_stage_gcn.pth"
+        gcn_scaler  = parent_dir / "squat_stage_gcn_scaler.pkl"
+        gcn_le      = parent_dir / "squat_stage_gcn_label_encoder.pkl"
+        if not gcn_weights.exists() or not gcn_scaler.exists() or not gcn_le.exists():
+            raise FileNotFoundError(
+                f"Squat GCN files not found in {parent_dir}. "
+                "Expected: squat_stage_gcn.pth, squat_stage_gcn_scaler.pkl, "
+                "squat_stage_gcn_label_encoder.pkl"
+            )
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        with open(gcn_scaler, "rb") as f: scaler        = pickle.load(f)
+        with open(gcn_le,     "rb") as f: label_encoder = pickle.load(f)
+        gcn_model = _SquatGCN(n_classes=len(label_encoder.classes_)).to(device)
+        gcn_model.load_state_dict(torch.load(gcn_weights, map_location=device))
+        gcn_model.eval()
+
+        lm_names = [
+            "NOSE",
+            "LEFT_SHOULDER",  "RIGHT_SHOULDER",
+            "LEFT_HIP",       "RIGHT_HIP",
+            "LEFT_KNEE",      "RIGHT_KNEE",
+            "LEFT_ANKLE",     "RIGHT_ANKLE",
+        ]
+
+        # ── State ─────────────────────────────────────────────────────────────
+        current_stage = "unknown"
+        counter       = 0
+        score_points  = 0
+        rep_foot_err  = False
+        rep_knee_err  = False
+
+        # THE FIX: track previous frame's error label, count only on transition
+        previous_foot = "correct"
+        previous_knee = "correct"
+        total_foot_errors = 0
+        total_knee_errors = 0
+
+        # ── Video I/O ─────────────────────────────────────────────────────────
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+
+        fps    = cap.get(cv2.CAP_PROP_FPS) or 30
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        writer = None
+        if output_path:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        start_time = time.time()
+
+        with mp_pose.Pose(
+            static_image_mode=False, model_complexity=1,
+            min_detection_confidence=0.8, min_tracking_confidence=0.8,
+        ) as pose:
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                res = pose.process(rgb)
+
+                if not res.pose_landmarks:
+                    if writer:
+                        writer.write(frame)
+                    continue
+
+                landmarks = res.pose_landmarks.landmark
+
+                # ── Feature row ───────────────────────────────────────────────
+                raw_row = {}
+                for lm_name in lm_names:
+                    lm_obj = landmarks[mp_pose.PoseLandmark[lm_name].value]
+                    col    = lm_name.lower()
+                    raw_row[f"{col}_x"] = lm_obj.x
+                    raw_row[f"{col}_y"] = lm_obj.y
+                    raw_row[f"{col}_z"] = lm_obj.z
+                    raw_row[f"{col}_v"] = lm_obj.visibility
+
+                # ── Stage prediction ──────────────────────────────────────────
+                predicted_stage, _ = _predict_squat_stage_gcn(
+                    raw_row, gcn_model, scaler, label_encoder,
+                    device, self.PREDICTION_PROB_THRESHOLD
+                )
+
+                # ── Rep counter: down → up ────────────────────────────────────
+                if predicted_stage == "down":
+                    current_stage = "down"
+                elif current_stage == "down" and predicted_stage == "up":
+                    current_stage = "up"
+                    counter      += 1
+                    if rep_foot_err and rep_knee_err:
+                        score_points += 0
+                    elif rep_foot_err or rep_knee_err:
+                        score_points += 5
+                    else:
+                        score_points += 10
+                    rep_foot_err = False
+                    rep_knee_err = False
+                elif predicted_stage not in ("unknown", ""):
+                    current_stage = predicted_stage
+
+                # ── Geometric errors ──────────────────────────────────────────
+                geo = _analyze_squat_foot_knee_placement(
+                    landmarks, current_stage,
+                    self.FOOT_SHOULDER_RATIO_THRESHOLDS,
+                    self.KNEE_FOOT_RATIO_THRESHOLDS,
+                    self.VISIBILITY_THRESHOLD,
+                )
+
+                fp = geo["foot_placement"]
+                kp = geo["knee_placement"]
+
+                foot_label = {-1:"unknown", 0:"correct", 1:"too tight", 2:"too wide"}.get(fp, "unknown")
+                knee_label = {-1:"unknown", 0:"correct", 1:"too tight", 2:"too wide"}.get(kp, "unknown")
+
+                # ── TRANSITION counting (the actual fix) ──────────────────────
+                if foot_label in ("too tight", "too wide"):
+                    if previous_foot != foot_label:      # only on transition
+                        total_foot_errors += 1
+                        rep_foot_err       = True
+                    previous_foot = foot_label
+                else:
+                    previous_foot = foot_label           # "correct" or "unknown"
+
+                if knee_label in ("too tight", "too wide"):
+                    if previous_knee != knee_label:
+                        total_knee_errors += 1
+                        rep_knee_err       = True
+                    previous_knee = knee_label
+                else:
+                    previous_knee = knee_label
+
+                has_error = foot_label in ("too tight", "too wide") or \
+                            knee_label in ("too tight", "too wide")
+
+                # ── Write annotated frame ─────────────────────────────────────
+                if writer:
+                    max_s    = counter * 10 if counter > 0 else 10
+                    live_pct = int((score_points / max_s) * 100) if max_s > 0 else 0
+                    _sq_draw_skeleton(frame, res.pose_landmarks,
+                                      mp_drawing, mp_pose, has_error)
+                    _sq_draw_hud(frame, current_stage, counter, live_pct,
+                                 foot_label, knee_label, has_error)
+                    writer.write(frame)
+
+        cap.release()
+        if writer:
+            writer.release()
+
+        duration  = time.time() - start_time
+        max_score = counter * 10 if counter > 0 else 10
+        score_pct = int((score_points / max_score) * 100) if max_score > 0 else 0
+
+        return {
+            "score"           : score_pct,
+            "duration_seconds": duration,
+            "error_count"     : total_foot_errors + total_knee_errors,
+            "details": {
+                "total_reps"  : counter,
+                "foot_errors" : total_foot_errors,
+                "knee_errors" : total_knee_errors,
+            },
+            "processed_video" : output_path,
+        }
 # ─────────────────────────────────────────────────────────────────────────────
 # Registry — add lunge here
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1719,6 +2184,7 @@ EXERCISE_DETECTORS: Dict[str, ExerciseDetector] = {
     "bicep_curl": BicepCurlDetector(),
     "plank"     : PlankDetector(),
     "lunge"     : LungeDetector(),
+    "squat"     : SquatDetector(),
 }
 
 
