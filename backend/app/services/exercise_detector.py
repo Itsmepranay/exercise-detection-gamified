@@ -1531,8 +1531,7 @@ class LungeDetector(ExerciseDetector):
         width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        # ── Output video path ─────────────────────────────────────────────
-        # Save to the same uploads/videos directory as the original
+        # ── Output video ──────────────────────────────────────────────────
         in_path = _Path(video_path)
         if output_path:
             processed_path = output_path
@@ -1544,18 +1543,27 @@ class LungeDetector(ExerciseDetector):
         fourcc = cv2.VideoWriter_fourcc(*"avc1")
         writer = cv2.VideoWriter(processed_path, fourcc, fps, (width, height))
         if not writer.isOpened():
-            # Fallback codec for systems without H.264
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             writer = cv2.VideoWriter(processed_path, fourcc, fps, (width, height))
 
         # ── Session state ─────────────────────────────────────────────────
-        current_stage        = ""
-        counter              = 0
+        current_stage    = ""
+        counter          = 0
+        score_total      = 0
+        prev_counter     = 0
+        rep_flash_frames = 0
+
+        # ── THE FIX: per-rep error flags (mirrors original lunge.py) ─────
+        # Original uses errors_from_this_rep (a set of error types seen THIS rep)
+        # to prevent the same error type from counting more than once per rep.
+        # We track them as boolean flags, reset at each rep completion — exactly
+        # matching "if 'knee over toe' not in errors_from_this_rep" logic.
+        rep_kot_error_seen   = False   # knee-over-toe seen this rep
+        rep_angle_error_seen = False   # knee-angle error seen this rep
+
+        # Total error counts — incremented at most ONCE per rep per type
         knee_over_toe_errors = 0
         knee_angle_errors    = 0
-        score_total          = 0
-        prev_counter         = 0
-        rep_flash_frames     = 0
 
         start_time = time.time()
 
@@ -1569,7 +1577,6 @@ class LungeDetector(ExerciseDetector):
                 if not ret:
                     break
 
-                # Decrement flash counter each frame regardless of pose
                 if rep_flash_frames > 0:
                     rep_flash_frames -= 1
 
@@ -1604,17 +1611,32 @@ class LungeDetector(ExerciseDetector):
                         current_stage = "mid"
                     elif stage_label == "D":
                         if current_stage in ("init", "mid"):
-                            counter += 1
-                            rep_flash_frames = 12
+                            # ── Rep completed ─────────────────────────────
+                            counter          += 1
+                            rep_flash_frames  = 12
+
+                            # Score this rep (original had no scoring, we add it)
+                            if rep_kot_error_seen:
+                                pass              # KOT error → no points (unsafe rep)
+                            elif rep_angle_error_seen:
+                                score_total += 5  # angle error → half points
+                            else:
+                                score_total += 10 # clean rep → full points
+
+                            # Reset per-rep flags for next rep
+                            rep_kot_error_seen   = False
+                            rep_angle_error_seen = False
+
                         current_stage = "down"
 
-                # ── Error GCN + geometric knee check (DOWN only) ──────────
+                # ── Error detection (DOWN stage only) ─────────────────────
                 knee_over_toe_error = False
                 knee_angle_error    = False
                 right_angle = left_angle = 0.0
                 right_angle_error = left_angle_error = False
 
                 if current_stage == "down":
+                    # Knee-over-toe: GCN error model
                     err_idx, _, err_conf = _predict_lunge_gcn(
                         raw_row, err_model, sc_err, device
                     )
@@ -1622,9 +1644,13 @@ class LungeDetector(ExerciseDetector):
 
                     if err_label == "L" and err_conf >= self.PREDICTION_PROB_THRESHOLD:
                         knee_over_toe_error = True
-                    elif err_label == "C" and err_conf >= self.PREDICTION_PROB_THRESHOLD:
-                        knee_over_toe_error = False
 
+                    # ── Count KOT error ONCE per rep (original pattern) ───
+                    if knee_over_toe_error and not rep_kot_error_seen:
+                        knee_over_toe_errors += 1
+                        rep_kot_error_seen    = True
+
+                    # Knee angle: geometric check, skipped if KOT active
                     if not knee_over_toe_error:
                         rh = [landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x,
                               landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y]
@@ -1647,32 +1673,20 @@ class LungeDetector(ExerciseDetector):
                         left_angle_error  = not (lo <= left_angle  <= hi)
                         knee_angle_error  = right_angle_error or left_angle_error
 
-                # ── Scoring ───────────────────────────────────────────────
-                if counter > prev_counter:
-                    if knee_over_toe_error:
-                        pass
-                    elif knee_angle_error:
-                        score_total += 5
-                        knee_angle_errors += 1
-                    else:
-                        score_total += 10
-                    prev_counter = counter
+                        # ── Count angle error ONCE per rep (original pattern) ──
+                        if knee_angle_error and not rep_angle_error_seen:
+                            knee_angle_errors    += 1
+                            rep_angle_error_seen  = True
 
-                if knee_over_toe_error:
-                    knee_over_toe_errors += 1
+                has_error = knee_over_toe_error or knee_angle_error
 
-                # Running score percentage for HUD
+                # Running score for HUD
                 max_so_far = counter * 10 if counter > 0 else 10
                 score_pct  = int((score_total / max_so_far) * 100)
 
-                has_error  = knee_over_toe_error or knee_angle_error
-
-                # ── Draw annotations ──────────────────────────────────────
-
-                # 1. Skeleton (green = clean, red = error)
+                # ── Draw annotations (UNCHANGED from original) ────────────
                 _lunge_draw_skeleton(frame, res, has_error)
 
-                # 2. Knee angle numbers at joint (only at DOWN, no KOT error)
                 if current_stage == "down" and not knee_over_toe_error:
                     _lunge_draw_knee_angles(
                         frame, landmarks, mp_pose,
@@ -1681,7 +1695,6 @@ class LungeDetector(ExerciseDetector):
                         (width, height)
                     )
 
-                # 3. HUD: top bar pills + error banners + rep flash
                 _lunge_hud(
                     frame, counter, current_stage, score_pct,
                     knee_over_toe_error, knee_angle_error,
@@ -1709,8 +1722,6 @@ class LungeDetector(ExerciseDetector):
                 "knee_angle_errors"   : knee_angle_errors,
             },
         }
-
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SquatDetector
