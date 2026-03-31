@@ -470,7 +470,7 @@
       const liveSel = document.getElementById('live-exercise-select');
       liveSel.innerHTML = '<option value="">Select an exercise…</option>';
       exercises
-        .filter(ex => ['bicep_curl', 'plank'].includes(ex.name))
+        .filter(ex => ['bicep_curl', 'plank', 'lunge', 'squat'].includes(ex.name))
         .forEach(ex => {
           const opt = document.createElement('option');
           opt.value = ex.name; opt.textContent = ex.display_name;
@@ -776,6 +776,23 @@
       alertsEl.innerHTML = stats.current_error
         ? alertHTML('⚠️ ' + stats.current_error)
         : '';
+    }else if (exerciseName === 'squat' || exerciseName === 'lunge') {
+      const reps  = stats.total_reps ?? 0;
+      const score = stats.score ?? 0;
+      const errs  = stats.total_errors ?? 0;
+
+      document.getElementById('val-reps').textContent   = reps;
+      document.getElementById('val-score').textContent  = score + '%';
+      document.getElementById('val-errors').textContent = errs;
+
+      const scoreEl = document.getElementById('val-score');
+      scoreEl.className = 'live-stat-value ' + (score >= 80 ? 'good' : score >= 50 ? 'warn' : 'bad');
+
+      const alertsEl = document.getElementById('live-alerts');
+      alertsEl.innerHTML = '';
+      (stats.active_errors || []).forEach(err => {
+        alertsEl.innerHTML += alertHTML('⚠️ ' + err);
+      });
     }
 
     document.getElementById('val-duration').textContent = Math.round(stats.duration ?? sessionSecs) + 's';
@@ -799,13 +816,27 @@
         ${summaryMetric('Form Score',  (lastStats.score ?? 0) + '%')}
         ${summaryMetric('Errors',      lastStats.total_errors ?? 0)}
         ${summaryMetric('Duration',    Math.round(lastStats.duration ?? sessionSecs) + 's')}`;
-    } else {
+    } else if(exerciseName === 'bicep_curl') {
       gridEl.innerHTML = `
         ${summaryMetric('Duration',     Math.round(lastStats.duration ?? sessionSecs) + 's')}
         ${summaryMetric('Quality',      (lastStats.score ?? 100) + '%')}
         ${summaryMetric('Low Back',     lastStats.low_back  ?? 0)}
         ${summaryMetric('High Back',    lastStats.high_back ?? 0)}
         ${summaryMetric('Error Time',   (lastStats.error_pct ?? 0) + '% of hold')}`;
+    }else if (exerciseName === 'squat') {
+      gridEl.innerHTML = `
+        ${summaryMetric('Total Reps',  lastStats.total_reps   ?? 0)}
+        ${summaryMetric('Form Score',  (lastStats.score ?? 0) + '%')}
+        ${summaryMetric('Foot Errors', lastStats.foot_errors  ?? 0)}
+        ${summaryMetric('Knee Errors', lastStats.knee_errors  ?? 0)}
+        ${summaryMetric('Duration',    Math.round(lastStats.duration ?? sessionSecs) + 's')}`;
+    } else if (exerciseName === 'lunge') {
+      gridEl.innerHTML = `
+        ${summaryMetric('Total Reps',      lastStats.total_reps           ?? 0)}
+        ${summaryMetric('Form Score',      (lastStats.score ?? 0) + '%')}
+        ${summaryMetric('Knee Over Toe',   lastStats.knee_over_toe_errors ?? 0)}
+        ${summaryMetric('Knee Angle Errs', lastStats.knee_angle_errors    ?? 0)}
+        ${summaryMetric('Duration',        Math.round(lastStats.duration ?? sessionSecs) + 's')}`;
     }
   }
 

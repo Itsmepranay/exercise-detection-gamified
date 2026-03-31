@@ -31,6 +31,10 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv
 
+
+from pathlib import Path
+_parent_dir = Path("C:\\Users\\prana\\OneDrive\\Desktop\\CAPSTONE\\testing02 - Copy")
+
 # ── Project root: walk up until we find the .pkl files ────────────────────
 def _find_project_root() -> Path:
     candidate = Path(__file__).resolve().parent
@@ -1007,7 +1011,7 @@ async def live_lunge_detection(websocket: WebSocket):
                     stats.get("rep_flash", 0)
                 )
 
-                b64 = _encode_frame(frame)
+                b64 = _encode(frame)
                 await websocket.send_text(json.dumps({
                     "annotated_frame": b64,
                     "stats": {
@@ -1449,7 +1453,7 @@ async def live_squat_detection(websocket: WebSocket):
                     stats["foot_label"], stats["knee_label"], stats["has_error"]
                 )
 
-                b64 = _encode_frame(frame)
+                b64 = _encode(frame)
                 await websocket.send_text(json.dumps({
                     "annotated_frame": b64,
                     "stats": {
