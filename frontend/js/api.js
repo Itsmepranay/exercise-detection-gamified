@@ -3,7 +3,12 @@ const API_BASE = 'https://abstract-jailbird-mutual.ngrok-free.dev/api';
 
 async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
-  const defaultOptions = { headers: { 'Content-Type': 'application/json' } };
+  const defaultOptions = { 
+    headers: { 
+      'Content-Type': 'application/json',
+      'ngrok-skip-browser-warning': 'true'
+    } 
+  };
   const config = { ...defaultOptions, ...options };
   try {
     const response = await fetch(url, config);
@@ -38,7 +43,11 @@ async function uploadExerciseVideo(userId, exerciseId, videoFile) {
   formData.append('video', videoFile);
   formData.append('user_id', userId);
   formData.append('exercise_id', exerciseId);
-  const response = await fetch(`${API_BASE}/sessions/upload`, { method: 'POST', body: formData });
+  const response = await fetch(`${API_BASE}/sessions/upload`, { 
+    method: 'POST', 
+    body: formData,
+    headers: { 'ngrok-skip-browser-warning': 'true' }
+  });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: response.statusText }));
     throw new Error(err.detail || `HTTP error! status: ${response.status}`);
