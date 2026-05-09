@@ -1,5 +1,5 @@
 // ── api.js ───────────────────────────────────────────────────
-const API_BASE = 'http://127.0.0.1:8080/api';
+const API_BASE = 'http://43.204.163.235:8080/api';
 
 async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
