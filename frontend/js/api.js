@@ -1,5 +1,5 @@
 // ── api.js ───────────────────────────────────────────────────
-const API_BASE = 'http://43.204.163.235:8080/api';
+const API_BASE = 'https://abstract-jailbird-mutual.ngrok-free.dev';
 
 async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
